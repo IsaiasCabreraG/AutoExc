@@ -1,1 +1,12 @@
+altgraph==0.17.5
+customtkinter==5.2.2
+darkdetect==0.8.0
+et_xmlfile==2.0.0
+openpyxl==3.1.5
+packaging==25.0
+pefile==2024.8.26
+pyinstaller==6.17.0
+pyinstaller-hooks-contrib==2025.10
 pyodbc==5.3.0
+pywin32-ctypes==0.2.3
+setuptools==80.9.0

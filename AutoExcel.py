@@ -2,6 +2,7 @@ import pyodbc # type: ignore
 import openpyxl # type: ignore
 import os
 import json 
+import sys
 
 
 
@@ -71,104 +72,66 @@ def mostrar_estructura_tabla(connection, tabla):
         
         print(f"{nombre_col:<25} | {tipo_dato:<15} | {tamano}")
 
-def tabular_datos(cursor: pyodbc.Cursor, datos):
+
+
+
+def obtener_ruta_recurso(relativa):
+    """ Obtiene la ruta absoluta para recursos (iconos, plantillas, etc) """
+    try:
+        # PyInstaller crea una carpeta temporal y guarda la ruta en _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relativa)
+
+def llenar_nomina_xlsx(datos_db, numero_nomina):
+    """Llena una plantilla de Excel con datos obtenidos de la base de datos.
+    Args:
+        datos_db (list): Lista de tuplas con los datos obtenidos de la base de datos.
+        numero_nomina (str): Numero de nomina para nombrar el archivo de salida.
     """
-    Toma el resultado de un fetch (tupla o lista de tuplas) 
-    y lo imprime como una tabla usando los metadatos del cursor.
-    """
-    if not datos:
-        print("Sin datos para mostrar.")
+    if not os.path.exists("config.json"):
+        print("Error: No existe config.json")
         return
 
-    # 1. Normalizar: si es una sola tupla (fetchone), meterla en una lista
-    filas = [datos] if isinstance(datos, pyodbc.Row) or isinstance(datos, tuple) else datos
-    
-    # 2. Obtener encabezados desde el cursor
-    headers = [desc[0] for desc in cursor.description]
-    
-    # 3. Calcular anchos de columna (comparando encabezado vs datos)
-    # Convertimos todo a string para medir largo
-    anchos = []
-    for i, col in enumerate(headers):
-        largo_max_datos = max([len(str(fila[i])) for fila in filas])
-        largo_cabecera = len(str(col))
-        anchos.append(max(largo_max_datos, largo_cabecera, 5)) # Mínimo 5 espacios
+    with open("config.json", "r", encoding="utf-8") as f:
+        config = json.load(f)
+        carpeta_salida = config.get("ruta_output", "")
 
-    # 4. Construir separadores y filas
-    linea = "+" + "+".join("-" * (a + 2) for a in anchos) + "+"
-    
-    # Imprimir Cabecera
-    print(linea)
-    encabezado_str = "| " + " | ".join(f"{str(h):<{anchos[i]}}" for i, h in enumerate(headers)) + " |"
-    print(encabezado_str)
-    print(linea.replace("-", "=")) # Separador visual fuerte para el header
+    nombre_archivo = f"Nomina_{numero_nomina}.xlsx"
+    ruta_final_salida = os.path.join(carpeta_salida, nombre_archivo)
+    ruta_plantilla = obtener_ruta_recurso("static/Plantilla_NominaPagoV2.xlsx")
 
-    # Imprimir Filas
-    for fila in filas:
-        fila_str = "| " + " | ".join(f"{str(fila[i]):<{anchos[i]}}" for i, d in enumerate(fila)) + " |"
-        print(fila_str)
-    
-    print(linea)
+    try:
+        wb = openpyxl.load_workbook(ruta_plantilla)
+        ws = wb.active
 
+        if not isinstance(datos_db, list):
+            datos_db = [datos_db]
 
-
-def llenar_nomina_xlsx(datos_db, ruta_plantilla, ruta_salida):
-    """
-    datos_db: Puede ser una lista de tuplas (fetchall) o una tupla sola (fetchone).
-    """
-    # 1. Cargar el libro y la hoja activa
-    wb = openpyxl.load_workbook(ruta_plantilla)
-    ws = wb.active # Esto toma la primera pestaña
-
-    # 2. Asegurarnos de que los datos sean una lista (por si viene un fetchone solo)
-    if not isinstance(datos_db, list):
-        datos_db = [datos_db]
-
-    # 3. Empezar a escribir desde la fila 10
-    fila_inicio = 11
-    
-    print(f"Insertando {len(datos_db)} filas en el Excel...")
-
-    for i, registro in enumerate(datos_db):
-        fila_actual = fila_inicio + i
+        fila_inicio = 11
+        for i, registro in enumerate(datos_db):
+            fila_actual = fila_inicio + i
+            ws.cell(row=fila_actual, column=2).value = registro[0]
+            ws.cell(row=fila_actual, column=3).value = registro[1]
+        wb.save(ruta_final_salida)
+        print(f"Éxito: Archivo guardado en {ruta_final_salida}")
         
-        # registro[0], registro[1], etc., dependen del orden de tu SELECT
-        # Ejemplo basado en una nómina típica (RUT, Nombre, Monto...):
-        ws.cell(row=fila_actual, column=2).value = registro[0] # Columna A
-        ws.cell(row=fila_actual, column=3).value = registro[1] # Columna B
-        
-    # 4. Guardar el archivo
-    wb.save(ruta_salida)
-    print(f"Archivo guardado exitosamente como: {ruta_salida}")
+    except Exception as e:
+        print(f"Error al procesar Excel: {e}")
 
         
 
 if __name__ == "__main__":
 
-    db_dir = "."
-    db_name = 'Database1'
-    db_ext = '.accdb'
-    driver = 'microsoft access driver (*.mdb, *.accdb)'
-
-    plantilla_path = "./static/Plantilla_NominaPagoV2.xlsx"
-    ruta_salida = "./output/NominaPago_Generado.xlsx"
-
-
-    connection = open_database(db_dir, db_name, db_ext, driver)
-    print("Conexion exitosa a la base de datos.")
-    cursor = connection.cursor()
-
-    # 3. Ejemplo de SELECT (Leer datos)
-    mostrar_estructura_tabla(connection, "cwmovim")
-    egreso_numero = 12177 
-    egreso_datos, columnas = datos_egreso(cursor, egreso_numero)
-    if egreso_datos:
-        print("Datos del egreso encontrado:")
-        print(egreso_datos)
-        llenar_nomina_xlsx(egreso_datos, plantilla_path, ruta_salida)
-    else:
-        print("No se encontro ningun egreso con ese numero.")
-
-
-
+    conn = open_database()
+    if conn:
+        cursor = conn.cursor()
+        datos, columnas = datos_egreso(cursor, 123456)
+        print("Datos obtenidos:", datos)
+        print("Columnas:", columnas)
+        mostrar_estructura_tabla(conn, "cwmovim")
+        llenar_nomina_xlsx(datos, "123456")
+        conn.close()
 

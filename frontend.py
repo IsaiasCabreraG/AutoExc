@@ -1,9 +1,11 @@
 import customtkinter as ctk
 from tkinter import messagebox
 from tkinter import filedialog
+import tkinter as tk
 import os
 import AutoExcel as AE
 import json
+import logging
 
 # Configuración de CustomTkinter
 ctk.set_appearance_mode("system")
@@ -20,7 +22,7 @@ class App(ctk.CTk):
         self.debug = debug
         self.title('AutoExcel - Generador de Nóminas')
         ancho_ventana = 500
-        alto_ventana = 300
+        alto_ventana = 300 if not self.debug else 550
         
         ancho_pantalla = self.winfo_screenwidth()
         alto_pantalla = self.winfo_screenheight()
@@ -29,6 +31,18 @@ class App(ctk.CTk):
         
         self.geometry(f"{ancho_ventana}x{alto_ventana}+{x}+{y}")
         self.resizable(False, False)
+        ruta_icono = AE.obtener_ruta_recurso("static/logo.ico")
+        self.iconbitmap(ruta_icono)
+        # img = tk.PhotoImage(file='static/logo.png')
+        # self.iconphoto(False, img)
+        self.logger = logging.getLogger("AutoExcel")
+        self.logger.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(levelname)s: %(message)s')
+
+        # Siempre guardar en archivo (aunque el modo debug esté apagado)
+        file_handler = logging.FileHandler("autoexcel_debug.log", mode='w', encoding='utf-8')
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
         
 
         #Pagina Menu Principal
@@ -46,7 +60,7 @@ class App(ctk.CTk):
         Nnomina_lb.pack(pady = (0,5))
         Nnomina_et = ctk.CTkEntry(master = self.main_fr, placeholder_text = "Ejemplo 12177")
         Nnomina_et.pack(pady = (0,20))
-        nomina_btn = ctk.CTkButton(master=self.main_fr, text="Generar Nómina", width=150 ,height=30, command=lambda: self.nomina_btn_fun(123))
+        nomina_btn = ctk.CTkButton(master=self.main_fr, text="Generar Nómina", width=150 ,height=30, command=lambda: self.nomina_btn_fun(Nnomina_et.get()))
         nomina_btn.pack()
         self.main_fr.pack( fill="both", expand=True)
 
@@ -101,6 +115,23 @@ class App(ctk.CTk):
         cancelar_btn = ctk.CTkButton(master=btn_fr, text="Cancelar", width=150, height=30, command=lambda: self.confirmar_salida())
         cancelar_btn.pack(side="left", padx=10)
 
+        if self.debug:
+            self.debug_fr= ctk.CTkFrame(master=self)
+            log_lb = ctk.CTkLabel(master=self.debug_fr, text="Consola de Depuración", font=("Arial", 12, "bold"))
+            log_lb.pack(pady=(10, 0))
+
+            self.log_widget = ctk.CTkTextbox(master=self.debug_fr, width=460, height=200, font=("Consolas", 11))
+            self.log_widget.pack(pady=10, padx=20)
+            self.log_widget.configure(state="disabled")
+
+            # Conectar el logger al recuadro
+            text_handler = TextboxHandler(self.log_widget)
+            text_handler.setFormatter(formatter)
+            self.logger.addHandler(text_handler)
+            self.debug_fr.pack(pady=10, padx=20)
+
+        self.logger.info("Aplicación iniciada correctamente")
+
 
         self.cargar_configuracion()
 
@@ -120,6 +151,9 @@ class App(ctk.CTk):
         ventana_a_mostrar.pack(fill="both", expand=True)
         if ventana_a_mostrar == self.main_fr:
             self.cargar_configuracion()
+        if self.debug:
+            self.debug_fr.pack_forget()
+            self.debug_fr.pack(pady=10, padx=20)
 
     def guardar_configuracion(self):
         config_data = {
@@ -181,12 +215,40 @@ class App(ctk.CTk):
         self.cambiarventana(self.main_fr, self.config_fr)
     
     def nomina_btn_fun(self, Nnomina):
-        conn= AE.open_database()
+        conn = AE.open_database()
         if conn is None:
-            messagebox.showerror("Error", "No se pudo conectar a la base de datos. Verifica la configuración.")
+            messagebox.showerror("Error de Conexión", "No se pudo conectar a la base de datos.\nVerifica la configuración de la ruta.")
             return
-        cur = conn.cursor()
-        print("si")
+        try:
+            cur = conn.cursor()
+            egreso_datos, columnas = AE.datos_egreso(cur, Nnomina)
+            if egreso_datos:
+                print(f"Datos del egreso {Nnomina} encontrados.")
+                AE.llenar_nomina_xlsx(egreso_datos, Nnomina)
+                messagebox.showinfo("Proceso Completado", f"La nómina N°{Nnomina} ha sido generada exitosamente en la carpeta: {self.output_path_et.get()}.")
+            
+            else:
+                messagebox.showwarning("Sin Resultados", f"No se encontró ningún egreso con el número: {Nnomina}")
+
+        except Exception as e:
+            messagebox.showerror("Error Crítico", f"Ocurrió un error inesperado:\n{e}")
+        
+        finally:
+            if conn:
+                conn.close()
+    
+
+class TextboxHandler(logging.Handler):
+    def __init__(self, textbox):
+        super().__init__()
+        self.textbox = textbox
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.textbox.configure(state="normal") # Desbloquear para escribir
+        self.textbox.insert("end", msg + "\n")
+        self.textbox.configure(state="disabled") # Bloquear
+        self.textbox.see("end") # Auto-scroll al final
 
 
 
@@ -194,5 +256,5 @@ class App(ctk.CTk):
 
 
 if __name__ == "__main__":
-    app = App(debug=False) # Cambia a False para ocultar el log
+    app = App(debug=True) # Cambia a False para ocultar el log
     app.mainloop()

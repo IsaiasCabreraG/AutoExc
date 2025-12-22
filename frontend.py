@@ -11,7 +11,11 @@ import logging
 ctk.set_appearance_mode("system")
 ctk.set_default_color_theme("blue")
 
+def solo_numeros(P):
 
+    if P == "":
+        return True
+    return P.isdigit()
 
 
 
@@ -56,10 +60,28 @@ class App(ctk.CTk):
         config_btn = ctk.CTkButton(master=aux_frame, text="⚙️", width=30 ,height=30, fg_color="transparent",hover_color=("gray75", "gray25"), text_color=("black", "white"), command=lambda: self.cambiarventana(self.config_fr, self.main_fr))
         config_btn.grid(row=0, column= 2, sticky="e", padx=10)
         aux_frame.pack(fill="x",pady=(15,40))
-        Nnomina_lb = ctk.CTkLabel(master = self.main_fr, text = "Ingrese el numero de nomina :")
-        Nnomina_lb.pack(pady = (0,5))
-        Nnomina_et = ctk.CTkEntry(master = self.main_fr, placeholder_text = "Ejemplo 12177")
-        Nnomina_et.pack(pady = (0,20))
+        Nnomina_lb = ctk.CTkLabel(master=self.main_fr, text="Ingrese Nómina y Año:")
+        Nnomina_lb.pack(pady=(0, 5))
+
+        self.container_inputs = ctk.CTkFrame(master=self.main_fr, fg_color="transparent")
+        self.container_inputs.pack(pady=(0, 20))
+        Nnomina_et = ctk.CTkEntry(master=self.container_inputs, placeholder_text="Ej: 12177", width=140)
+        Nnomina_et.grid(row=0, column=0, padx=5)
+        Nnomina_et.bind("<KeyRelease>", self.validar_en_tiempo_real)
+        self.año_var = ctk.StringVar(value="----")
+        self.año_dd = ctk.CTkOptionMenu(
+            master=self.container_inputs,
+            values=["----"],
+            variable=self.año_var,
+            width=100,
+            corner_radius=5,
+            fg_color=("gray85", "gray25"), 
+            button_color=("gray80", "gray30"),
+            button_hover_color=("gray70", "gray40")
+        )
+        self.año_dd.grid(row=0, column=1, padx=5)
+        self.año_dd.configure(state="disabled") 
+
         nomina_btn = ctk.CTkButton(master=self.main_fr, text="Generar Nómina", width=150 ,height=30, command=lambda: self.nomina_btn_fun(Nnomina_et.get()))
         nomina_btn.pack()
         self.main_fr.pack( fill="both", expand=True)
@@ -73,7 +95,7 @@ class App(ctk.CTk):
         aux_frame.grid_columnconfigure(2, weight=1,uniform="a")
         title_lb= ctk.CTkLabel(master=aux_frame, text="Configuracion",font =("",32,"bold"))
         title_lb.grid(row=0, column= 1)
-        config_btn = ctk.CTkButton(master=aux_frame, text="❮" , width=30 ,height=30, fg_color="transparent",hover_color=("gray75", "gray25"), text_color=("black", "white"), command=lambda: self.cambiarventana(self.main_fr, self.config_fr))
+        config_btn = ctk.CTkButton(master=aux_frame, text="❮" , width=30 ,height=30, fg_color="transparent",hover_color=("gray75", "gray25"), text_color=("black", "white"), command=lambda: self.confirmar_salida())
         config_btn.grid(row=0, column= 0, sticky="w", padx=10)
         aux_frame.pack(fill="x",pady=(15,40))
 
@@ -128,12 +150,17 @@ class App(ctk.CTk):
             text_handler = TextboxHandler(self.log_widget)
             text_handler.setFormatter(formatter)
             self.logger.addHandler(text_handler)
-            self.debug_fr.pack(pady=10, padx=20)
+            self.debug_fr.pack(pady=10, padx=20,side ="bottom")
 
         self.logger.info("Aplicación iniciada correctamente")
 
-
+        self.refrescar_años_db()
         self.cargar_configuracion()
+
+    def validar_en_tiempo_real(self, event):
+        valor = event.widget.get()
+        if valor and not valor.isdigit():
+            event.widget.delete(len(valor)-1, "end")
 
 
     def buscar_archivo(self,entry_path,tipo):
@@ -149,11 +176,8 @@ class App(ctk.CTk):
     def cambiarventana(self, ventana_a_mostrar, ventana_a_ocultar):
         ventana_a_ocultar.pack_forget()
         ventana_a_mostrar.pack(fill="both", expand=True)
-        if ventana_a_mostrar == self.main_fr:
+        if ventana_a_mostrar == self.config_fr:
             self.cargar_configuracion()
-        if self.debug:
-            self.debug_fr.pack_forget()
-            self.debug_fr.pack(pady=10, padx=20)
 
     def guardar_configuracion(self):
         config_data = {
@@ -164,37 +188,43 @@ class App(ctk.CTk):
             with open("config.json", "w", encoding="utf-8") as f:
                 json.dump(config_data, f, indent=4)
             messagebox.showinfo("Éxito", "Configuración guardada correctamente.")
-            self.cambiarventana(self.main_fr,self.config_fr) # Regresar al menú principal tras guardar
+            self.cambiarventana(self.main_fr,self.config_fr)
+            self.refrescar_años_db()
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo guardar: {e}")
 
     def cargar_configuracion(self):
-        if os.path.exists("config.json"):
-            try:
-                with open("config.json", "r", encoding="utf-8") as f:
-                    config_data = json.load(f)
-                
-                # Insertamos los datos en los entries
-                # Recuerda: como son 'readonly', hay que habilitarlos primero
-                self.actualizar_entry(self.db_path_et, config_data.get("ruta_db", ""))
-                self.actualizar_entry(self.output_path_et, config_data.get("ruta_output", ""))
-                
-            except Exception as e:
-                print(f"Error al cargar configuración: {e}")
+        self.logger.info("Cargando configuración desde JSON...")
+        if not(os.path.exists("config.json")):
+            self.logger.warning("No se encontró config.json. Creando uno nuevo con valores vacíos.")
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump({"ruta_db": "", "ruta_output": ""}, f, indent=4)
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+            
+            # Insertamos los datos en los entries
+            # Recuerda: como son 'readonly', hay que habilitarlos primero
+            self.logger.debug("JSON cargado correctamente.")
+            self.actualizar_entry(self.db_path_et, config_data.get("ruta_db", ""))
+            self.actualizar_entry(self.output_path_et, config_data.get("ruta_output", ""))
+            
+        except Exception as e:
+            self.logger.error(f"Error al cargar configuración desde JSON : {e}")
 
     def actualizar_entry(self, entry, texto):
+        self.logger.debug(f"actualizando entry{texto}")
         entry.configure(state="normal") 
         entry.delete(0, "end")
         
         if texto and texto.strip() != "":
             entry.insert(0, texto)
-            entry.configure(state="readonly") 
         else:
             entry.configure(placeholder_text="Seleccione una ruta...")
-            entry.configure(state="readonly")
+        entry.configure(state="readonly") 
     
     def confirmar_salida(self):
-        print("entro")
+        self.logger.info("Confirmando salida de la configuración...")
         config_guardada = {"ruta_db": "", "ruta_output": ""}
         if os.path.exists("config.json"):
             with open("config.json", "r", encoding="utf-8") as f:
@@ -206,37 +236,63 @@ class App(ctk.CTk):
 
         if db_actual != config_guardada.get("ruta_db", "") or \
         out_actual != config_guardada.get("ruta_output", ""):
+            self.logger.warning("Cambios detectados en la configuración sin guardar.")
             respuesta = messagebox.askyesno(
                 "Cambios sin guardar", 
                 "Has realizado cambios en la configuración. ¿Deseas salir sin guardar?"
             )
             if not respuesta:
+                self.logger.info("El usuario decidió no salir sin guardar.")
                 return 
+        self.logger.info("Saliendo de la configuración sin guardar.")
         self.cambiarventana(self.main_fr, self.config_fr)
     
     def nomina_btn_fun(self, Nnomina):
+        self.logger.info("Botón de generación de nómina presionado.")
+        if not Nnomina.strip().isdigit():
+            messagebox.showwarning("Entrada Inválida", "Por favor, ingrese un número de nómina válido.")
+            self.logger.warning("Intento de generar nómina sin número ingresado.")
+            return
+        self.logger.info(f"Iniciando generación de nómina para N°{Nnomina}...")
         conn = AE.open_database()
         if conn is None:
             messagebox.showerror("Error de Conexión", "No se pudo conectar a la base de datos.\nVerifica la configuración de la ruta.")
+            self.logger.error("Conexión a la base de datos establecida.")
             return
+        self.logger.debug("Conexión a la base de datos establecida.")
         try:
             cur = conn.cursor()
-            egreso_datos, columnas = AE.datos_egreso(cur, Nnomina)
+            egreso_datos = AE.datos_egreso(cur, Nnomina, self.año_var.get())
             if egreso_datos:
-                print(f"Datos del egreso {Nnomina} encontrados.")
-                AE.llenar_nomina_xlsx(egreso_datos, Nnomina)
-                messagebox.showinfo("Proceso Completado", f"La nómina N°{Nnomina} ha sido generada exitosamente en la carpeta: {self.output_path_et.get()}.")
+                self.logger.info(f"Datos obtenidos para nómina N°{Nnomina}-{self.año_var.get()}: {len(egreso_datos)} registros.")
+                AE.llenar_nomina_xlsx(egreso_datos, Nnomina, self.año_var.get())
+                messagebox.showinfo("Proceso Completado", f"La nómina N°{Nnomina}-{self.año_var.get()} ha sido generada exitosamente en la carpeta: {self.output_path_et.get()}.")
             
             else:
                 messagebox.showwarning("Sin Resultados", f"No se encontró ningún egreso con el número: {Nnomina}")
+                self.logger.warning(f"No se encontraron datos para nómina N°{Nnomina}-{self.año_var.get()}.")
 
         except Exception as e:
             messagebox.showerror("Error Crítico", f"Ocurrió un error inesperado:\n{e}")
+            self.logger.error(f"Error durante la generación de la nómina: {e}")
         
         finally:
             if conn:
                 conn.close()
     
+    def refrescar_años_db(self):
+        """Llama a AE para obtener años y actualiza el estado del Dropdown"""
+        self.logger.info("Intentando obtener años de la base de datos...")
+        lista_años = AE.obtener_años_disponibles()
+        
+        if lista_años:
+            self.año_dd.configure(state="normal", values=lista_años)
+            self.año_var.set(lista_años[0]) # Año más reciente
+            self.logger.info(f"Dropdown actualizado con {len(lista_años)} años.")
+        else:
+            self.año_dd.configure(state="disabled", values=["----"])
+            self.año_var.set("----")
+            self.logger.warning("No se pudo acceder a los años. Dropdown deshabilitado.")
 
 class TextboxHandler(logging.Handler):
     def __init__(self, textbox):
@@ -245,10 +301,10 @@ class TextboxHandler(logging.Handler):
 
     def emit(self, record):
         msg = self.format(record)
-        self.textbox.configure(state="normal") # Desbloquear para escribir
+        self.textbox.configure(state="normal") 
         self.textbox.insert("end", msg + "\n")
-        self.textbox.configure(state="disabled") # Bloquear
-        self.textbox.see("end") # Auto-scroll al final
+        self.textbox.configure(state="disabled") 
+        self.textbox.see("end") 
 
 
 
@@ -256,5 +312,5 @@ class TextboxHandler(logging.Handler):
 
 
 if __name__ == "__main__":
-    app = App(debug=True) # Cambia a False para ocultar el log
+    app = App(debug=False)
     app.mainloop()

@@ -209,3 +209,8 @@ __marimo__/
 #database
 *.accdb
 *.laccdb
+
+Release/
+
+aux.txt
+config.json

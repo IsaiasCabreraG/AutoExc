@@ -3,6 +3,22 @@ import openpyxl # type: ignore
 import os
 import json 
 import sys
+import logging
+import datetime
+
+MAPEO_DOCS = {
+    'FT': '33: Factura Electrónica'
+}
+
+MAPEO_PAGO = {
+    'CC': 'CC: Cuenta Corriente',
+    'CA': 'CA: Cuenta de Ahorro',
+    'VV': 'VV: Vale Vista',
+    'CH': 'CH: Cheque',
+    'OT': 'OT: Otro'
+}
+
+
 
 
 
@@ -34,24 +50,65 @@ def open_database():
         print(f"Error de conexión: {e}")
         return None
 
-def datos_egreso(cursor: pyodbc.Cursor, NEgreso: int):
-    """Funcion encargada de obtener los datos de un egreso especifico y los nombres de columna.
+def datos_egreso(cursor, NEgreso: int, año: int):
+    """
+    Busca datos de egreso y los retorna como una lista de diccionarios con nombres claros.
     Args:
         cursor (pyodbc.Cursor): Cursor de la base de datos.
-        NEgreso (int): Numero de egreso a buscar.
-        
+        NEgreso (int): Número de egreso a buscar.
+        año (int): Año del egreso.
     Returns:
-        tuple: (fila_de_datos o None, lista_de_nombres_de_columnas)
+        list: Lista de diccionarios con los datos del egreso.
     """
-    CpbNum = str(NEgreso)
-    if len(CpbNum) < 8:
-        CpbNum = CpbNum.zfill(8)
-    print(f"Buscando egreso con CpbNum: {CpbNum}")
+    # 1. Preparar el número de egreso (rellenar con ceros hasta 8 caracteres)
+    CpbNum = str(NEgreso).zfill(8)
+    CpbAno = str(año)
+    codigos_permitidos = tuple(MAPEO_DOCS.keys())
+    filtro_sql = str(codigos_permitidos).replace(",)", ")")
+    
+    print(f"Buscando egreso N°: {CpbNum} para el año: {CpbAno}")
 
-    cursor.execute("SELECT CodAux, MovTipDocRef FROM cwmovim WHERE CpbNum = ?", (CpbNum,))
-    fila = cursor.fetchall()
-    columnas = [desc[0] for desc in cursor.description] if cursor.description else []
-    return fila, columnas
+    # 2. Consulta SQL con las columnas solicitadas
+    # Nota: Asegúrate de que los nombres de las columnas coincidan exactamente con tu DB
+    query = f"""
+        SELECT 
+            T1.CodAux, 
+            T2.NomAux, 
+            T1.MovNumDocRef, 
+            T1.MovTipDocRef, 
+            T1.MovDebe, 
+            T1.FecPag
+        FROM cwmovim AS T1
+        LEFT JOIN cwtauxi AS T2 ON T1.CodAux = T2.CodAux
+        WHERE T1.CpbNum = ? 
+          AND T1.CpbAno = ?
+          AND T1.CodAux <> '0000000000'
+          AND T1.MovTipDocRef IN {filtro_sql}
+    """
+    
+    try:
+        cursor.execute(query, (CpbNum, CpbAno))
+        filas = cursor.fetchall()
+        
+        # 3. Transformar a estructura de diccionarios (Clave: Valor)
+        registros_mapeados = []
+        for fila in filas:
+            registro = {
+                'Rut Proovedor':   fila[0],
+                'Razon Social':    fila[1],
+                'N documento':     fila[2],
+                'Tipo Documento':  fila[3],
+                'Monto Documento': fila[4],
+                'Fecha Emision':   fila[5],
+                'Total Pagar':     fila[4]  # MovDebe se asigna a ambos según tu solicitud
+            }
+            registros_mapeados.append(registro)
+            
+        return registros_mapeados
+        
+    except Exception as e:
+        print(f"Error en la consulta SQL: {e}")
+        return []
 
 def mostrar_estructura_tabla(connection, tabla):
     """Funcion encargada de mostrar la estructura de una tabla en la base de datos.
@@ -85,53 +142,138 @@ def obtener_ruta_recurso(relativa):
 
     return os.path.join(base_path, relativa)
 
-def llenar_nomina_xlsx(datos_db, numero_nomina):
-    """Llena una plantilla de Excel con datos obtenidos de la base de datos.
-    Args:
-        datos_db (list): Lista de tuplas con los datos obtenidos de la base de datos.
-        numero_nomina (str): Numero de nomina para nombrar el archivo de salida.
+def llenar_nomina_xlsx(datos_db, numero_nomina, año):
     """
+    Llena la plantilla de Excel usando diccionarios mapeados.
+    """
+    logger = logging.getLogger("AutoExcel")
+    
+
     if not os.path.exists("config.json"):
-        print("Error: No existe config.json")
+        logger.error("No se encontró config.json para obtener la ruta de salida.")
         return
 
     with open("config.json", "r", encoding="utf-8") as f:
         config = json.load(f)
         carpeta_salida = config.get("ruta_output", "")
 
-    nombre_archivo = f"Nomina_{numero_nomina}.xlsx"
+    if not carpeta_salida or not os.path.exists(carpeta_salida):
+        logger.error(f"La ruta de salida no es válida: {carpeta_salida}")
+        return
+
+    nombre_archivo = f"Nomina_{numero_nomina}-{año}.xlsx"
     ruta_final_salida = os.path.join(carpeta_salida, nombre_archivo)
     ruta_plantilla = obtener_ruta_recurso("static/Plantilla_NominaPagoV2.xlsx")
 
     try:
+        logger.debug(f"Cargando plantilla desde: {ruta_plantilla}")
         wb = openpyxl.load_workbook(ruta_plantilla)
         ws = wb.active
-
-        if not isinstance(datos_db, list):
-            datos_db = [datos_db]
-
         fila_inicio = 11
+        
         for i, registro in enumerate(datos_db):
             fila_actual = fila_inicio + i
-            ws.cell(row=fila_actual, column=2).value = registro[0]
-            ws.cell(row=fila_actual, column=3).value = registro[1]
+            # Mapeo explícito a celdas
+            ws.cell(row=fila_actual, column=2).value = registro['Rut Proovedor']   # B
+            ws.cell(row=fila_actual, column=3).value = registro['Razon Social']    # C
+            ws.cell(row=fila_actual, column=4).value = registro['N documento']     # D
+            ws.cell(row=fila_actual, column=5).value = MAPEO_DOCS.get(registro['Tipo Documento'], '99: Otro Documento')  # E (Mapeado)
+            ws.cell(row=fila_actual, column=6).value = registro['Monto Documento'] # F
+            ws.cell(row=fila_actual, column=7).value = registro['Fecha Emision']   # G
+            ws.cell(row=fila_actual, column=12).value = registro['Total Pagar']    # L
+            ws.cell(row=fila_actual, column=13).value = MAPEO_PAGO.get('CC')       # M (Mapeado)
+
         wb.save(ruta_final_salida)
-        print(f"Éxito: Archivo guardado en {ruta_final_salida}")
-        
+        logger.info(f"Nómina generada con éxito: {nombre_archivo}")
+
     except Exception as e:
-        print(f"Error al procesar Excel: {e}")
+        logger.error(f"Error al llenar Excel: {e}")
+        
+    except PermissionError:
+        logger.error(f"Error: El archivo {nombre_archivo} está abierto. Ciérralo e intenta de nuevo.")
+        raise Exception("El archivo de destino está abierto. Por favor, ciérrelo.")
+    except Exception as e:
+        logger.error(f"Error inesperado al llenar el Excel: {e}")
+        raise e
+    
+def obtener_años_disponibles():
+    """
+    Intenta conectar a la DB usando la ruta de config.json 
+    y retorna la lista de años.
+    Returns:
+        list: Lista de años disponibles en la tabla cwmovim.
+    """
+    años = []
+    conn = open_database() # Tu función que ya abre la base de datos
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT CpbAno FROM cwmovim ORDER BY CpbAno DESC")
+            años = [str(fila[0]) for fila in cursor.fetchall()]
+        except Exception as e:
+            print(f"Error al obtener años: {e}")
+        finally:
+            conn.close()
+    return años
+
+def inspeccionar_tipos_documento():
+    """Consulta los valores únicos y la frecuencia de la columna MovTipDocRef."""
+    conn = open_database()
+    resultados = []
+    if conn:
+        try:
+            cursor = conn.cursor()
+            # Esta consulta trae el valor y cuántas veces se repite
+            query = """
+                SELECT MovTipDocRef, COUNT(*) as Total
+                FROM cwmovim
+                GROUP BY MovTipDocRef
+                ORDER BY COUNT(*) DESC
+            """
+            cursor.execute(query)
+            resultados = cursor.fetchall()
+        except Exception as e:
+            print(f"Error al inspeccionar documentos: {e}")
+        finally:
+            conn.close()
+    return resultados
 
         
 
 if __name__ == "__main__":
-
+    # 1. Intentar conectar
     conn = open_database()
+    
     if conn:
-        cursor = conn.cursor()
-        datos, columnas = datos_egreso(cursor, 123456)
-        print("Datos obtenidos:", datos)
-        print("Columnas:", columnas)
-        mostrar_estructura_tabla(conn, "cwmovim")
-        llenar_nomina_xlsx(datos, "123456")
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            
+            # --- NUEVA FUNCIÓN: Inspección de tipos ---
+            print("\n--- REVISANDO CÓDIGOS DE DOCUMENTOS EN LA DB ---")
+            tipos = inspeccionar_tipos_documento() # Asegúrate de que esta función esté definida arriba
+            for t in tipos:
+                print(f"Código en DB: '{t[0]}' | Cantidad de registros: {t[1]}")
+            print("-----------------------------------------------\n")
+
+            # 2. Probar obtención de datos (Ajustado con AÑO)
+            # Cambia 123456 y 2025 por datos que sepas que existen para probar
+            nomina_test = 12177 
+            año_test = 2025
+            
+            datos = datos_egreso(cursor, nomina_test, año_test)
+            
+            if datos:
+                print(f"Éxito: Se obtuvieron {len(datos)} registros.")
+                # 3. Probar generación de Excel
+                llenar_nomina_xlsx(datos, str(nomina_test))
+            else:
+                print(f"Aviso: No se encontraron datos para la nómina {nomina_test} en {año_test}")
+
+        except Exception as e:
+            print(f"Error durante la prueba: {e}")
+        finally:
+            conn.close()
+            print("\nConexión cerrada.")
+    else:
+        print("No se pudo establecer la conexión inicial. Revisa la ruta en config.json.")
 

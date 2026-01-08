@@ -4,7 +4,6 @@ import os
 import json 
 import sys
 import logging
-import datetime
 
 MAPEO_DOCS = {
     'FT': '33: Factura Electrónica'
@@ -16,6 +15,9 @@ MAPEO_PAGO = {
     'VV': 'VV: Vale Vista',
     'CH': 'CH: Cheque',
     'OT': 'OT: Otro'
+}
+MAPEO_BANCOS = {
+    '001': '001 BANCO DE CHILE'
 }
 
 
@@ -72,7 +74,7 @@ def datos_egreso(cursor, NEgreso: int, año: int):
     # Nota: Asegúrate de que los nombres de las columnas coincidan exactamente con tu DB
     query = f"""
         SELECT 
-            T1.CodAux, 
+            T2.RutAux,
             T2.NomAux, 
             T1.MovNumDocRef, 
             T1.MovTipDocRef, 
@@ -94,7 +96,7 @@ def datos_egreso(cursor, NEgreso: int, año: int):
         registros_mapeados = []
         for fila in filas:
             registro = {
-                'Rut Proovedor':   fila[0],
+                'Rut Proovedor':   fila[0].strip().replace(".", ""),
                 'Razon Social':    fila[1],
                 'N documento':     fila[2],
                 'Tipo Documento':  fila[3],
@@ -142,7 +144,7 @@ def obtener_ruta_recurso(relativa):
 
     return os.path.join(base_path, relativa)
 
-def llenar_nomina_xlsx(datos_db, numero_nomina, año):
+def llenar_nomina_xlsx(datos_db, numero_nomina, año, RutEmpresa=""):
     """
     Llena la plantilla de Excel usando diccionarios mapeados.
     """
@@ -164,14 +166,19 @@ def llenar_nomina_xlsx(datos_db, numero_nomina, año):
     nombre_archivo = f"Nomina_{numero_nomina}-{año}.xlsx"
     ruta_final_salida = os.path.join(carpeta_salida, nombre_archivo)
     ruta_plantilla = obtener_ruta_recurso("static/Plantilla_NominaPagoV2.xlsx")
+    RutEmpresa = RutEmpresa.strip(".-")
 
     try:
         logger.debug(f"Cargando plantilla desde: {ruta_plantilla}")
         wb = openpyxl.load_workbook(ruta_plantilla)
         ws = wb.active
         fila_inicio = 11
+        ws.cell(row=5, column=3).value = int(numero_nomina+año)  # C5
+        ws.cell(row=6, column=3).value = RutEmpresa     # C6
         
+        totalPago = 0
         for i, registro in enumerate(datos_db):
+            totalPago += int(registro['Total Pagar'])
             fila_actual = fila_inicio + i
             # Mapeo explícito a celdas
             ws.cell(row=fila_actual, column=2).value = registro['Rut Proovedor']   # B
@@ -182,9 +189,11 @@ def llenar_nomina_xlsx(datos_db, numero_nomina, año):
             ws.cell(row=fila_actual, column=7).value = registro['Fecha Emision']   # G
             ws.cell(row=fila_actual, column=12).value = registro['Total Pagar']    # L
             ws.cell(row=fila_actual, column=13).value = MAPEO_PAGO.get('CC')       # M (Mapeado)
+            ws.cell(row=fila_actual, column=14).value = MAPEO_BANCOS.get('001')       # N (Descripción fija)
 
         wb.save(ruta_final_salida)
         logger.info(f"Nómina generada con éxito: {nombre_archivo}")
+        return totalPago
 
     except Exception as e:
         logger.error(f"Error al llenar Excel: {e}")

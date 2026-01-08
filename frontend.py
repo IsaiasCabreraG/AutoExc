@@ -1,11 +1,21 @@
+
+import os, sys
+
+if getattr(sys, 'frozen', False):
+    base = sys._MEIPASS
+else:
+    base = os.path.dirname(__file__)
+
+os.environ["TCL_LIBRARY"] = os.path.join(base, "_tcl_data", "tcl8.6")
+os.environ["TK_LIBRARY"]  = os.path.join(base, "_tk_data", "tk8.6")
+
 import customtkinter as ctk
 from tkinter import messagebox
 from tkinter import filedialog
-import tkinter as tk
-import os
 import AutoExcel as AE
 import json
 import logging
+
 
 # Configuración de CustomTkinter
 ctk.set_appearance_mode("system")
@@ -75,9 +85,10 @@ class App(ctk.CTk):
             variable=self.año_var,
             width=100,
             corner_radius=5,
-            fg_color=("gray85", "gray25"), 
-            button_color=("gray80", "gray30"),
-            button_hover_color=("gray70", "gray40")
+            fg_color=("#FFFFFF", "gray25"), 
+            button_color=("#F0F0F0", "gray30"),
+            button_hover_color=("#E5E5E5", "gray40"),
+            text_color=("black", "white")
         )
         self.año_dd.grid(row=0, column=1, padx=5)
         self.año_dd.configure(state="disabled") 
@@ -97,7 +108,7 @@ class App(ctk.CTk):
         title_lb.grid(row=0, column= 1)
         config_btn = ctk.CTkButton(master=aux_frame, text="❮" , width=30 ,height=30, fg_color="transparent",hover_color=("gray75", "gray25"), text_color=("black", "white"), command=lambda: self.confirmar_salida())
         config_btn.grid(row=0, column= 0, sticky="w", padx=10)
-        aux_frame.pack(fill="x",pady=(15,40))
+        aux_frame.pack(fill="x",pady=(15,25))
 
 
         path_fr = ctk.CTkFrame(master=self.config_fr, fg_color="transparent")
@@ -108,25 +119,31 @@ class App(ctk.CTk):
         path_fr.grid_columnconfigure(1, weight=7)
         path_fr.grid_columnconfigure(2, weight=1) 
 
+        rut_lb = ctk.CTkLabel(path_fr, text="RUT Empresa :")
+        rut_lb.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        
+        self.rut_empresa_et = ctk.CTkEntry(path_fr, placeholder_text="12.345.678-9")
+        self.rut_empresa_et.grid(row=0, column=1, columnspan=2, sticky="w", padx=5, pady=5)
+
             # Base de Datos
         db_path_lb = ctk.CTkLabel(path_fr, text="Base de Datos :")
-        db_path_lb.grid(row=0, column=0, sticky="w", padx=5, pady=10)
+        db_path_lb.grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.db_path_et = ctk.CTkEntry(path_fr, placeholder_text="Seleccione un archivo...")
-        self.db_path_et.grid(row=0, column=1, sticky="ew", padx=5, pady=10)
+        self.db_path_et.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
         self.db_path_et.configure(state="readonly")
         db_path_btn = ctk.CTkButton(path_fr, text="📁", width=40, 
                                     command=lambda: self.buscar_archivo(self.db_path_et, "db"))
-        db_path_btn.grid(row=0, column=2, sticky="ew", padx=5, pady=10)
+        db_path_btn.grid(row=1, column=2, sticky="ew", padx=5, pady=5)
 
             # Carpeta de Salida
         output_path_lb = ctk.CTkLabel(path_fr, text="Carpeta de Salida :")
-        output_path_lb.grid(row=1, column=0, sticky="w", padx=5, pady=10)
+        output_path_lb.grid(row=2, column=0, sticky="w", padx=5, pady=5)
         self.output_path_et = ctk.CTkEntry(path_fr, placeholder_text="Seleccione una carpeta...")
-        self.output_path_et.grid(row=1, column=1, sticky="ew", padx=5, pady=10)
+        self.output_path_et.grid(row=2, column=1, sticky="ew", padx=5, pady=5)
         self.output_path_et.configure(state="readonly")
         output_path_btn = ctk.CTkButton(path_fr, text="📁", width=40, 
                                         command=lambda: self.buscar_archivo(self.output_path_et, "folder"))
-        output_path_btn.grid(row=1, column=2, sticky="ew", padx=5, pady=10)
+        output_path_btn.grid(row=2, column=2, sticky="ew", padx=5, pady=5)
 
         btn_fr = ctk.CTkFrame(master=self.config_fr, fg_color="transparent")
         btn_fr.pack(pady=20) # Este pady le da espacio respecto a lo de arriba
@@ -183,6 +200,7 @@ class App(ctk.CTk):
         config_data = {
             "ruta_db": self.db_path_et.get(),
             "ruta_output": self.output_path_et.get(),
+            "rut_empresa": self.rut_empresa_et.get()
         }
         try:
             with open("config.json", "w", encoding="utf-8") as f:
@@ -198,7 +216,7 @@ class App(ctk.CTk):
         if not(os.path.exists("config.json")):
             self.logger.warning("No se encontró config.json. Creando uno nuevo con valores vacíos.")
             with open("config.json", "w", encoding="utf-8") as f:
-                json.dump({"ruta_db": "", "ruta_output": ""}, f, indent=4)
+                json.dump({"ruta_db": "", "ruta_output": "", "rut_empresa": ""}, f, indent=4)
         try:
             with open("config.json", "r", encoding="utf-8") as f:
                 config_data = json.load(f)
@@ -207,6 +225,7 @@ class App(ctk.CTk):
             # Recuerda: como son 'readonly', hay que habilitarlos primero
             self.logger.debug("JSON cargado correctamente.")
             self.actualizar_entry(self.db_path_et, config_data.get("ruta_db", ""))
+            self.actualizar_entry(self.rut_empresa_et, config_data.get("rut_empresa", ""))
             self.actualizar_entry(self.output_path_et, config_data.get("ruta_output", ""))
             
         except Exception as e:
@@ -220,22 +239,30 @@ class App(ctk.CTk):
         if texto and texto.strip() != "":
             entry.insert(0, texto)
         else:
-            entry.configure(placeholder_text="Seleccione una ruta...")
+            if entry == self.db_path_et:
+                entry.configure(placeholder_text="Seleccione un archivo...")
+            elif entry == self.output_path_et:
+                entry.configure(placeholder_text="Seleccione una ruta...")
+            elif entry == self.rut_empresa_et:
+                entry.configure(placeholder_text="12345678-9")
+                return
         entry.configure(state="readonly") 
     
     def confirmar_salida(self):
         self.logger.info("Confirmando salida de la configuración...")
-        config_guardada = {"ruta_db": "", "ruta_output": ""}
+        config_guardada = {"ruta_db": "", "ruta_output": "", "rut_empresa": ""}
         if os.path.exists("config.json"):
             with open("config.json", "r", encoding="utf-8") as f:
                 config_guardada = json.load(f)
 
         db_actual = self.db_path_et.get()
         out_actual = self.output_path_et.get()
+        rut_actual = self.rut_empresa_et.get()
 
 
         if db_actual != config_guardada.get("ruta_db", "") or \
-        out_actual != config_guardada.get("ruta_output", ""):
+        out_actual != config_guardada.get("ruta_output", "") or \
+        rut_actual != config_guardada.get("rut_empresa", ""):
             self.logger.warning("Cambios detectados en la configuración sin guardar.")
             respuesta = messagebox.askyesno(
                 "Cambios sin guardar", 
@@ -265,8 +292,17 @@ class App(ctk.CTk):
             egreso_datos = AE.datos_egreso(cur, Nnomina, self.año_var.get())
             if egreso_datos:
                 self.logger.info(f"Datos obtenidos para nómina N°{Nnomina}-{self.año_var.get()}: {len(egreso_datos)} registros.")
-                AE.llenar_nomina_xlsx(egreso_datos, Nnomina, self.año_var.get())
-                messagebox.showinfo("Proceso Completado", f"La nómina N°{Nnomina}-{self.año_var.get()} ha sido generada exitosamente en la carpeta: {self.output_path_et.get()}.")
+                total = AE.llenar_nomina_xlsx(egreso_datos, Nnomina, self.año_var.get(), RutEmpresa=self.rut_empresa_et.get())
+                total_formateado = f"${total:,.0f}".replace(",", ".")
+                mensaje = (
+                    f"Proceso Completado con Éxito\n\n"
+                    f"Nómina N°: {Nnomina}\n"
+                    f"Año: {self.año_var.get()}\n"
+                    f"Total a Pagar: {total_formateado}\n"
+                    f"Registros: {len(egreso_datos)}\n\n"
+                    f"Ubicación: {self.output_path_et.get()}"
+                )
+                messagebox.showinfo("Nómina Generada", mensaje)
             
             else:
                 messagebox.showwarning("Sin Resultados", f"No se encontró ningún egreso con el número: {Nnomina}")

@@ -4,6 +4,7 @@ import sys
 import json
 import logging
 import AutoExcel as AE
+import seguridad
 
 # --- Mantenemos tu lógica de recursos ---
 if getattr(sys, 'frozen', False):
@@ -55,12 +56,19 @@ class AutoExcelApp:
         self.file_picker = ft.FilePicker(on_result=self._file_picker_result)
         self.page.overlay.append(self.file_picker)
         self.log_debug("INIT", "✓ FilePicker inicializado")
+
+        self.lista_usuarios = ft.ListView(expand=True, spacing=5)
+        self.usuario_seleccionado = None
+
         
         brillo_sistema = self.page.platform_brightness
         self.es_oscuro = brillo_sistema == ft.Brightness.DARK or brillo_sistema is None
         self.log_debug("INIT", f"Tema del sistema detectado: {'OSCURO' if self.es_oscuro else 'CLARO'}")
         
         self.build_ui()
+        # La aplicación ahora inicia mostrando SOLO el login
+        self.mostrar_login() 
+        self.page.update()
         self.log_debug("INIT", "✓ Interfaz de usuario construida")
         
         # Configurar handlers según el modo
@@ -85,8 +93,7 @@ class AutoExcelApp:
                 self.logger.error(f"No se pudo crear archivo de log: {e}")
             
         
-        self.refrescar_años_db()
-        self.cargar_configuracion()
+
         self.log_debug("INIT", "✓✓✓ Aplicación inicializada correctamente")
     
     def log_debug(self, categoria, mensaje):
@@ -99,10 +106,13 @@ class AutoExcelApp:
         
         self.log_debug("UI", "→ Construyendo vista de configuración...")
         self.config_view = self.build_config_view()
+
+        self.log_debug("UI", "→ Construyendo vista de login...")
+        self.login_view = self.build_login_view()
         
         # Contenedor de vistas
         self.views_container = ft.Column(
-            controls=[self.main_view, self.config_view],
+            controls=[self.main_view, self.config_view, self.login_view],
             spacing=0
         )
         
@@ -170,7 +180,7 @@ class AutoExcelApp:
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            visible=True
+            visible=False
         )
 
     def build_config_view(self):
@@ -256,6 +266,62 @@ class AutoExcelApp:
             ]),
             padding=10
         )
+    
+    def build_login_view(self):
+        self.user_field = ft.TextField(label="Usuario", width=280, prefix_icon=ft.Icons.PERSON)
+        self.pass_field = ft.TextField(
+            label="Contraseña", 
+            width=280, 
+            password=True, 
+            can_reveal_password=True,
+            prefix_icon=ft.Icons.LOCK,
+            on_submit=lambda _: self.intentar_login() # Enter para entrar
+        )
+        
+        return ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Icon(ft.Icons.LOCK_PERSON_OUTLINED, size=80, color=ft.Colors.BLUE),
+                    ft.Text("Acceso al Sistema", size=24, weight=ft.FontWeight.BOLD),
+                    self.user_field,
+                    self.pass_field,
+                    ft.Container(height=10),
+                    ft.ElevatedButton(
+                        "Iniciar Sesión", 
+                        width=280, 
+                        height=45,
+                        on_click=lambda _: self.intentar_login()
+                    ),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            expand=True,
+            padding=ft.padding.only(top=50),
+            visible=True 
+        )
+
+    def intentar_login(self):
+        user = self.user_field.value
+        pw = self.pass_field.value
+        
+        self.log_debug("AUTH", f"Intento de login para usuario: {user}")
+        
+        if seguridad.validar_credenciales(user, pw):
+            self.log_debug("AUTH", "✓ Acceso concedido")
+            self.refrescar_años_db()
+            self.cargar_configuracion()
+            self.login_view.visible = False
+            self.main_view.visible = True
+            self.page.update()
+        else:
+            self.log_debug("AUTH", "✗ Acceso denegado: credenciales incorrectas")
+            self.mostrar_dialogo("Error de Acceso", "Usuario o contraseña incorrectos.", es_error=True)
+
+    def mostrar_login(self):
+        self.login_view.visible = True
+        self.main_view.visible = False
+        self.config_view.visible = False
 
     # --- LÓGICA DE NEGOCIO ---
     def cambiar_ventana(self, ventana):
@@ -710,6 +776,7 @@ class AutoExcelApp:
             )
         
         self.log_debug("UI", f"✓ Estilos actualizados para tema {'OSCURO' if self.es_oscuro else 'CLARO'}")
+
 
 
 def main(page: ft.Page):

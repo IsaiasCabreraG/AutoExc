@@ -6,9 +6,6 @@ if getattr(sys, 'frozen', False):
 else:
     base = os.path.dirname(__file__)
 
-os.environ["TCL_LIBRARY"] = os.path.join(base, "_tcl_data", "tcl8.6")
-os.environ["TK_LIBRARY"]  = os.path.join(base, "_tk_data", "tk8.6")
-
 import customtkinter as ctk
 from tkinter import messagebox
 from tkinter import filedialog

@@ -94,6 +94,7 @@ def datos_egreso(cursor, NEgreso: int, año: int):
         SELECT 
             T2.RutAux,
             T2.NomAux, 
+            T2.Email,
             T1.MovNumDocRef, 
             T1.MovTipDocRef, 
             T1.MovDebe, 
@@ -119,11 +120,12 @@ def datos_egreso(cursor, NEgreso: int, año: int):
             registro = {
                 'Rut Proovedor':   fila[0].strip().replace(".", ""),
                 'Razon Social':    fila[1],
-                'N documento':     fila[2],
-                'Tipo Documento':  fila[3],
-                'Monto Documento': fila[4],
-                'Fecha Emision':   fila[5],
-                'Total Pagar':     fila[4]
+                'Email':           fila[2],
+                'N documento':     fila[3],
+                'Tipo Documento':  fila[4],
+                'Monto Documento': fila[5],
+                'Fecha Emision':   fila[6],
+                'Total Pagar':     fila[5]
             }
             registros_mapeados.append(registro)
             
@@ -235,7 +237,7 @@ def llenar_nomina_xlsx(datos_db, numero_nomina, año, RutEmpresa=""):
         
         # Encabezado
         log_debug("EXCEL", "→ Escribiendo encabezado...")
-        ws.cell(row=5, column=3).value = int(str(numero_nomina) + str(año))  # C5
+        ws.cell(row=5, column=3).value = int(numero_nomina + año) # C5
         ws.cell(row=6, column=3).value = RutEmpresa     # C6
         log_debug("EXCEL", f"  • C5 (ID Nómina): {numero_nomina}{año}")
         log_debug("EXCEL", f"  • C6 (RUT): {RutEmpresa}")
@@ -349,7 +351,113 @@ def inspeccionar_tipos_documento():
     
     return resultados
 
+def llenarR2(datos_db, numero_nomina, año):
+    """
+    Llena la plantilla de Excel para la Plantilla Banco (R2) 
+    agrupando facturas por proveedor basándose en la estructura de llenar_nomina_xlsx.
+    """
+    log_debug("EXCEL", "╔═══════════════════════════════════════╗")
+    log_debug("EXCEL", "║      GENERANDO PLANTILLA BANCO R2     ║")
+    log_debug("EXCEL", "╚═══════════════════════════════════════╝")
+
+    # 1. Obtener ruta de salida desde config.json
+    if not os.path.exists("config.json"):
+        log_debug("EXCEL", "✗ No se encontró config.json para obtener la ruta de salida")
+        return None
+
+    try:
+        with open("config.json", "r", encoding="utf-8") as f:
+            config = json.load(f)
+            carpeta_salida = config.get("ruta_output", "")
         
+        log_debug("EXCEL", f"Carpeta de salida: {carpeta_salida}")
+    except Exception as e:
+        log_debug("EXCEL", f"✗ Error al leer config.json: {e}")
+        return None
+
+    if not carpeta_salida or not os.path.exists(carpeta_salida):
+        log_debug("EXCEL", f"✗ La ruta de salida no es válida: {carpeta_salida}")
+        return None
+
+    # 2. Agrupamiento de datos (Lógica R2: Un RUT = Una Fila de Abono)
+    agrupados = {}
+    for registro in datos_db:
+        rut = registro['Rut Proovedor']
+        if rut not in agrupados:
+            agrupados[rut] = {
+                "rut": rut,
+                "razon_social": registro['Razon Social'],
+                "facturas": [],
+                "monto_total_abonado": 0,
+                "mail": registro.get('Email', '') 
+            }
+        
+        agrupados[rut]["facturas"].append({
+            "numero": int(registro['N documento']),
+            "monto": registro['Monto Documento']
+        })
+        agrupados[rut]["monto_total_abonado"] += registro['Monto Documento']
+
+    # 3. Preparar rutas de archivos
+    nombre_archivo = f"R2_Nomina_{numero_nomina}-{año}.xlsx"
+    ruta_final_salida = os.path.join(carpeta_salida, nombre_archivo)
+    ruta_plantilla = obtener_ruta_recurso("static/R2.xlsx")
+
+    log_debug("EXCEL", f"Archivo destino: {nombre_archivo}")
+    log_debug("EXCEL", f"Ruta completa: {ruta_final_salida}")
+
+    try:
+        log_debug("EXCEL", "→ Cargando plantilla R2...")
+        if not os.path.exists(ruta_plantilla):
+            log_debug("EXCEL", f"✗ Plantilla no encontrada: {ruta_plantilla}")
+            return None
+        
+        wb = openpyxl.load_workbook(ruta_plantilla)
+        ws = wb.active
+        
+        fila_inicio = 2 # Los datos comienzan después del encabezado
+        
+        log_debug("EXCEL", f"→ Escribiendo {len(agrupados)} proveedores agrupados...")
+
+        for i, (rut, info) in enumerate(agrupados.items()):
+            fila_actual = fila_inicio + i
+            
+            # Datos principales del proveedor
+            ws.cell(row=fila_actual, column=1).value = info["rut"]               # A: RUT BENEFICIARIO
+            ws.cell(row=fila_actual, column=2).value = info["razon_social"]     # B: NOMBRE BENEFICIARIO
+            ws.cell(row=fila_actual, column=3).value = ""                       # C: CTA ABONO (Faltante)
+            ws.cell(row=fila_actual, column=4).value = "001"                    # D: CÓD BANCO (Por defecto Chile)
+            ws.cell(row=fila_actual, column=5).value = "Abono en Cuenta"         # E: MODALIDAD
+            ws.cell(row=fila_actual, column=6).value = ""                       # F: CÓD SUCURSAL
+
+            # Llenado dinámico de facturas (Columnas G a AB en pares: Nro y Monto)
+            for idx, fac in enumerate(info["facturas"]):
+                if idx >= 11: break # Límite de la plantilla R2
+                
+                col_nro = 7 + (idx * 2)   # G, I, K...
+                col_mto = 8 + (idx * 2)   # H, J, L...
+                
+                ws.cell(row=fila_actual, column=col_nro).value = fac["numero"]
+                ws.cell(row=fila_actual, column=col_mto).value = fac["monto"]
+
+            # Totales, Mail y Glosa
+            ws.cell(row=fila_actual, column=29).value = info["monto_total_abonado"] # AC: MONTO TOTAL ABONO
+            ws.cell(row=fila_actual, column=30).value = info["mail"]                # AD: MAIL BENEFICIARIO
+            ws.cell(row=fila_actual, column=31).value = f"NOMINA {numero_nomina}"    # AE: GLOSA MAIL
+
+        # Guardar
+        log_debug("EXCEL", "→ Guardando archivo R2...")
+        wb.save(ruta_final_salida)
+        log_debug("EXCEL", f"✓✓✓ R2 generado exitosamente: {nombre_archivo}")
+        log_debug("EXCEL", "╚═══════════════════════════════════════╝")
+        
+        return True
+
+    except Exception as e:
+        log_debug("EXCEL", f"✗ Error crítico al generar R2: {e}")
+        return False
+        
+
 
 if __name__ == "__main__":
     # Configurar logging para pruebas standalone
@@ -399,3 +507,4 @@ if __name__ == "__main__":
     else:
         log_debug("TEST", "✗ No se pudo establecer la conexión inicial")
         log_debug("TEST", "Revisa la ruta en config.json")
+

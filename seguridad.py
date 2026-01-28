@@ -55,27 +55,37 @@ def _cargar_archivo() -> dict:
 # FUNCIONES PÚBLICAS
 # ============================================================
 
-def registrar_usuario(usuario: str, password: str):
-    """Registra un nuevo usuario."""
+def registrar_usuario(usuario: str, password: str, rol: str = "user") -> tuple:
+    """Registra un nuevo usuario con un rol específico."""
     usuarios = _cargar_archivo()
 
     if usuario in usuarios:
         return False, "El usuario ya existe."
 
-    usuarios[usuario] = _hash_password(password)
+    # Guardamos como un diccionario interno
+    usuarios[usuario] = {
+        "pass": _hash_password(password),
+        "rol": rol
+    }
     _guardar_archivo(usuarios)
-
-    return True, "Usuario registrado exitosamente."
-
+    return True, f"Usuario {usuario} registrado como {rol}."
 
 def validar_credenciales(usuario: str, password: str) -> bool:
-    """Valida usuario y contraseña."""
+    """Valida usuario y contraseña buscando en la nueva estructura."""
     usuarios = _cargar_archivo()
 
     if usuario not in usuarios:
         return False
 
-    return usuarios[usuario] == _hash_password(password)
+    # Accedemos a la clave 'pass' dentro del usuario
+    return usuarios[usuario]["pass"] == _hash_password(password)
+
+def obtener_rol(usuario: str) -> str:
+    """Devuelve el rol del usuario o None si no existe."""
+    usuarios = _cargar_archivo()
+    if usuario in usuarios:
+        return usuarios[usuario].get("rol", "admin")
+    return None
 
 
 def eliminar_usuario(usuario: str) -> bool:
@@ -91,8 +101,12 @@ def eliminar_usuario(usuario: str) -> bool:
 
 
 def listar_usuarios():
-    """Devuelve una lista de usuarios existentes (sin contraseñas)."""
-    return list(_cargar_archivo().keys())
+    """Devuelve una lista de diccionarios con usuarios y sus roles."""
+    usuarios = _cargar_archivo()
+
+    return [{"user": k, "rol": v.get("rol", "admin")} for k, v in usuarios.items()]
+
+
 
 
 def cambiar_password(usuario: str, nueva_password: str) -> bool:

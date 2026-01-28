@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['frontend.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[('static', 'static')],
@@ -35,6 +35,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    version='C:\\Users\\isaia\\AppData\\Local\\Temp\\2e8d6ee6-b5d3-4760-86f1-372f90c91017',
-    icon=['static\\logo.ico'],
+    version='C:\\Users\\isaia\\Repositorios\\AutoExc\\version_info.txt',
+    icon='static\\logo.ico',
 )

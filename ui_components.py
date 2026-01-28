@@ -1,0 +1,330 @@
+import flet as ft
+from utils import *
+
+def build_ui(self):
+    verificar_primer_usuario(self)
+    log_debug(self, "UI", "→ Construyendo vista principal...")
+    self.main_view = build_main_view(self)
+    
+    log_debug(self, "UI", "→ Construyendo vista de configuración...")
+    self.config_view = build_config_view(self)
+
+    log_debug(self, "UI", "→ Construyendo vista de login...")
+    self.login_view = build_login_view(self)
+    
+    # Contenedor de vistas
+    self.views_container = ft.Column(
+        controls=[self.main_view, self.config_view, self.login_view],
+        spacing=0,
+        expand=True
+    )
+    
+    self.page.add(self.views_container)
+    
+    if self.debug:
+        log_debug(self, "UI", "→ Construyendo vista de debug...")
+        self.debug_view = build_debug_view(self)
+        self.page.add(self.debug_view)
+        log_debug(self, "UI", "✓ Vista de debug agregada")
+
+    cambiar_ventana(self, "login")
+    self.page.update()
+
+def build_main_view(self):
+    self.nomina_field = ft.TextField(
+        label="Nómina",
+        hint_text="Ej: 12177",
+        width=140,
+        text_align=ft.TextAlign.CENTER,
+        input_filter=ft.InputFilter(
+            allow=True, 
+            regex_string=r"^[0-9]*$", 
+            replacement_string=""
+        )
+    )
+    
+    self.año_dropdown = ft.Dropdown(
+        label="Año",
+        width=120,
+        value="----",
+        options=[ft.dropdown.Option("----")],
+        disabled=True
+    )
+
+    self.plantilla_banco_check = ft.Checkbox(
+        label="Plantilla Banco",
+        value=False
+    )
+    
+    return ft.Container(
+        content=ft.Column(
+            controls=[
+                ft.Row(
+                    controls=[
+                        ft.Container(expand=1),
+                        ft.Text("AutoExcel", size=32, weight=ft.FontWeight.BOLD),
+                        ft.Container(
+                            content=ft.IconButton(
+                                icon=ft.Icons.SETTINGS,
+                                on_click=lambda _: cambiar_ventana(self, "config")
+                            ),
+                            expand=1,
+                            alignment=ft.alignment.center_right,
+                            padding=ft.padding.only(right=10)
+                        )
+                    ],
+                ),
+                ft.Container(height=50),
+                ft.Text("Ingrese Nómina y Año:", size=14),
+                ft.Row(
+                    controls=[self.nomina_field, self.año_dropdown],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=10
+                ),
+                ft.Row(
+                    controls=[self.plantilla_banco_check],
+                    alignment=ft.MainAxisAlignment.CENTER # Esto centra el checkbox horizontalmente
+                ),
+                ft.Container(height=20),
+                        ft.ElevatedButton(
+                            text="Generar Nómina",
+                            width=200,
+                            height=45,
+                            on_click=lambda _: generar_nomina(self)
+                        )
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        visible=False
+    )
+
+def build_config_view(self):
+    # 1. Componentes del Header
+    self.tema_switch = ft.Switch(
+        label="Modo Oscuro",
+        value=self.es_oscuro, # Se inicializa según el estado actual
+        active_color=ft.Colors.BLUE_400,
+        on_change=lambda _: cambiar_tema_handler(self)
+    )
+
+    self.config_title = ft.Text(
+        "Parámetros del Sistema", 
+        size=28, 
+        weight=ft.FontWeight.BOLD, 
+        expand=True, 
+        text_align="center"
+    )
+
+    # --- VISTA 1: PARÁMETROS ---
+    self.rut_field = ft.TextField(label="RUT Empresa", width=330, hint_text="12345678-K")                
+    self.db_path_field = ft.TextField(label="Base de Datos", width=330, read_only=True)
+    self.output_path_field = ft.TextField(label="Carpeta de Salida", width=330, read_only=True)
+
+    self.vista_parametros = ft.Column([
+        ft.Container(height=20),
+        ft.Row([self.rut_field, ft.Container(width=40)], alignment=ft.MainAxisAlignment.CENTER),
+        ft.Row([
+            self.db_path_field,
+            ft.IconButton(icon=ft.Icons.FILE_OPEN, on_click=lambda _: buscar_archivo(self, "db"))
+        ], alignment=ft.MainAxisAlignment.CENTER),
+        ft.Row([
+            self.output_path_field,
+            ft.IconButton(icon=ft.Icons.FOLDER_OPEN, on_click=lambda _: buscar_archivo(self, "folder"))
+        ], alignment=ft.MainAxisAlignment.CENTER),
+        ft.Container(height=20),
+        ft.Row([
+            ft.ElevatedButton("Guardar", width=150, on_click=lambda _: guardar_configuracion(self)),
+            ft.OutlinedButton("Cancelar", width=150, on_click=lambda _: confirmar_salida(self))
+        ], alignment=ft.MainAxisAlignment.CENTER) 
+    ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, visible=True, expand=True)
+
+    # --- VISTA 2: USUARIOS ---
+    self.nuevo_usuario_field = ft.TextField(label="Nuevo Usuario", width=180, prefix_icon=ft.Icons.PERSON_ADD_OUTLINED)
+    self.nueva_pass_field = ft.TextField(label="Contraseña", width=200, password=True, can_reveal_password=True, prefix_icon=ft.Icons.KEY_OUTLINED)
+    self.check_admin = ft.Checkbox(label="Admin", value=False)
+    
+    self.barra_creacion_usuarios = ft.Row([
+        self.nuevo_usuario_field,
+        self.nueva_pass_field,
+        self.check_admin,
+        ft.ElevatedButton(
+            "Crear", 
+            icon=ft.Icons.ADD, 
+            # Fondo azul y texto blanco para resaltar
+            style=ft.ButtonStyle(
+                color=ft.Colors.WHITE,
+                bgcolor=ft.Colors.BLUE_700,
+            ),
+            on_click=lambda _: agregar_usuario_handler(self) 
+        ),
+        ft.Divider()
+    ], alignment=ft.MainAxisAlignment.CENTER)
+
+    self.lista_usuarios_ui = ft.Column(expand=True, scroll=ft.ScrollMode.ADAPTIVE, spacing=0)
+
+    self.vista_usuarios = ft.Column([
+        self.barra_creacion_usuarios, 
+        ft.Text("Usuarios Registrados:", size=16, weight=ft.FontWeight.W_500),
+        ft.Container(content=self.lista_usuarios_ui, expand=True, padding=ft.padding.only(top=10))
+    ], visible=False, expand=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
+    # --- ESTRUCTURA DE CONTENIDO ---
+    self.content_area = ft.Container(content=self.vista_parametros, expand=True, padding=ft.padding.all(20))
+
+    # --- NAVIGATION RAIL (SIN TRAILING) ---
+    self.nav_rail = ft.NavigationRail(
+        selected_index=0,
+        label_type=ft.NavigationRailLabelType.ALL,
+        min_width=100,
+        group_alignment=-0.9,
+        destinations=[
+            ft.NavigationRailDestination(icon=ft.Icons.SETTINGS_OUTLINED, selected_icon=ft.Icons.SETTINGS, label="Parámetros"),
+            ft.NavigationRailDestination(icon=ft.Icons.PERSON_OUTLINED, selected_icon=ft.Icons.PERSON, label="Usuarios"),
+        ],
+        on_change=lambda e: cambiar_sub_config(self, e.control.selected_index),
+    )
+
+    # --- BOTÓN DE LOGOUT (Superpuesto con Stack) ---
+    self.logout_button = ft.IconButton(
+        icon=ft.Icons.LOGOUT_ROUNDED,
+        icon_color=ft.Colors.RED_400,
+        icon_size=28,
+        tooltip="Cerrar Sesión",
+        on_click=lambda _: cerrar_sesion_handler(self)
+    )
+
+    # Stack para superponer el botón sobre el NavigationRail
+    nav_with_logout = ft.Stack([
+        self.nav_rail,
+        ft.Container(
+            content=self.logout_button,
+            left=0,
+            bottom=0,
+            width=100,  # Mismo ancho que min_width del NavigationRail
+            alignment=ft.alignment.center,
+            padding=ft.padding.only(bottom=10)
+        )
+    ])
+
+    # --- RENDERIZADO FINAL ---
+    return ft.Container(
+        content=ft.Column([
+            # Header
+            ft.Row([
+                ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda _: confirmar_salida(self)),
+                self.config_title,
+                self.tema_switch, # <--- Ahora usamos el Switch
+            ]),
+            ft.Divider(height=1),
+            ft.Row([
+                nav_with_logout,
+                ft.VerticalDivider(width=1),
+                self.content_area
+            ], expand=True) 
+        ], expand=True), 
+        expand=True, 
+        visible=False    
+    )
+
+
+def build_debug_view(self):
+    self.log_textbox = ft.TextField(
+        multiline=True,
+        read_only=True,
+        min_lines=5,
+        max_lines=10,
+        text_size=11,
+        expand=False
+    )
+    return ft.Container(
+        content=ft.Column([
+            ft.Text("Consola Debug", weight=ft.FontWeight.BOLD),
+            ft.Container(
+                content=self.log_textbox,
+                height=200,  # Altura fija del contenedor
+            )
+        ]),
+        padding=10
+    )
+
+def build_login_view(self):
+    self.user_field = ft.TextField(label="Usuario", width=280, prefix_icon=ft.Icons.PERSON)
+    self.pass_field = ft.TextField(
+        label="Contraseña", 
+        width=280, 
+        password=True, 
+        can_reveal_password=True,
+        prefix_icon=ft.Icons.LOCK,
+        on_submit=lambda _: intentar_login(self) # Enter para entrar
+    )
+    
+    return ft.Container(
+        content=ft.Column(
+            controls=[
+                ft.Icon(ft.Icons.LOCK_PERSON_OUTLINED, size=80, color=ft.Colors.BLUE),
+                ft.Text("Acceso al Sistema", size=24, weight=ft.FontWeight.BOLD),
+                self.user_field,
+                self.pass_field,
+                ft.Container(height=10),
+                ft.ElevatedButton(
+                    "Iniciar Sesión", 
+                    width=280, 
+                    height=45,
+                    on_click=lambda _: intentar_login(self)
+                ),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+        ),
+        expand=True,
+        padding=ft.padding.only(top=50),
+        visible=False 
+    )
+
+    
+def verificar_primer_usuario(self):
+    """Comprueba si existen usuarios. Si no, fuerza la creación del primero."""
+    usuarios = seguridad.listar_usuarios()
+    
+    if not usuarios:
+        log_debug(self, "AUTH", "No se detectaron usuarios. Solicitando creación de administrador inicial.")
+        
+        user_input = ft.TextField(label="Usuario Administrador", width=280, autofocus=True)
+        pass_input = ft.TextField(label="Contraseña", width=280, password=True, can_reveal_password=True)
+
+        def crear_primer_admin(e):
+            u = user_input.value.strip()
+            p = pass_input.value.strip()
+            
+            if u and p:
+                # Forzamos el rol 'admin' por ser el primero
+                exito, msg = seguridad.registrar_usuario(u, p, rol="admin")
+                if exito:
+                    dialogo_inicial.open = False
+                    self.page.update()
+                    mostrar_dialogo(self, "Configuración Inicial", f"Administrador '{u}' creado con éxito. Ya puede iniciar sesión.")
+                else:
+                    user_input.error_text = msg
+                    self.page.update()
+            else:
+                user_input.error_text = "Complete todos los campos"
+                self.page.update()
+
+        dialogo_inicial = ft.AlertDialog(
+            modal=True, # No se puede cerrar haciendo clic fuera
+            title=ft.Text("Primer Inicio: Crear Administrador"),
+            content=ft.Column([
+                ft.Text("No se encontraron usuarios en el sistema.\nPor favor, cree la cuenta de administrador inicial."),
+                user_input,
+                pass_input
+            ], tight=True, spacing=20),
+            actions=[
+                ft.ElevatedButton("Crear Administrador", on_click=crear_primer_admin)
+            ],
+            actions_alignment=ft.MainAxisAlignment.CENTER
+        )
+
+        self.page.overlay.append(dialogo_inicial)
+        dialogo_inicial.open = True
+        self.page.update()
+    log_debug(self, "AUTH", "Usuarios existentes detectados. Continuando con el flujo normal de login.")

@@ -27,6 +27,9 @@ def intentar_login(self):
         cambiar_ventana(self, "main")
     else:
         log_debug(self, "AUTH", "✗ Acceso denegado: credenciales incorrectas")
+        self.pass_field.value = "" 
+        self.user_field.value = ""  
+
         mostrar_dialogo(self, "Error de Acceso", "Usuario o contraseña incorrectos.", es_error=True)
 
 
@@ -132,12 +135,12 @@ def guardar_configuracion(self):
         mostrar_dialogo(self, "Error", f"No se pudo guardar el archivo: {e}", True)
 
 def cargar_configuracion(self):
-    """Carga la configuración desde config.json"""
+    """Carga la configuración o crea una inicial basada en el sistema si no existe."""
     log_debug(self, "CONFIG", "─── Cargando configuración desde disco ───")
     
+    # 1. Detectar el estado del sistema operativo inmediatamente
     brillo_sistema = self.page.platform_brightness
     tema_sistema = brillo_sistema == ft.Brightness.DARK or brillo_sistema is None
-    self.es_oscuro = tema_sistema
     
     if os.path.exists("config.json"):
         try:
@@ -146,38 +149,45 @@ def cargar_configuracion(self):
                 self.db_path_field.value = data.get("ruta_db", "")
                 self.output_path_field.value = data.get("ruta_output", "")
                 self.rut_field.value = data.get("rut_empresa", "")
-                self.es_oscuro = data.get("dark_mode", tema_sistema)
+                # Priorizar lo que diga el JSON
+                self.es_oscuro = data.get("dark_mode", tema_sistema) 
                 
-                log_debug(self, "CONFIG", "✓ config.json leído correctamente:")
-                log_debug(self, "CONFIG", f"  • DB: {self.db_path_field.value}")
-                log_debug(self, "CONFIG", f"  • Output: {self.output_path_field.value}")
-                log_debug(self, "CONFIG", f"  • RUT: {self.rut_field.value}")
-                log_debug(self, "CONFIG", f"  • Tema: {'OSCURO' if self.es_oscuro else 'CLARO'}")
-                
-                # Aplicar a la página
-                self.page.theme_mode = ft.ThemeMode.DARK if self.es_oscuro else ft.ThemeMode.LIGHT
-                
-                # Cambiamos el icono del botón según la configuración
-                if hasattr(self, "tema_switch"):
-                    self.tema_switch.value = self.es_oscuro
-
-            self.page.update()
-        except json.JSONDecodeError as e:
-            log_debug(self, "CONFIG", f"✗ Error JSON: {e}")
+                log_debug(self, "CONFIG", f"✓ Cargado desde JSON. Modo Oscuro: {self.es_oscuro}")
         except Exception as e:
-            log_debug(self, "CONFIG", f"✗ Error al cargar: {type(e).__name__}: {e}")
+            log_debug(self, "CONFIG", f"✗ Error JSON: {e}")
+            self.es_oscuro = tema_sistema
     else:
-        log_debug(self, "CONFIG", "⚠️ config.json no existe, usando valores por defecto")
+        # 2. SI NO HAY JSON: Creamos uno nuevo con la preferencia del sistema
+        log_debug(self, "CONFIG", f"⚠️ Sin config.json. Creando inicial con tema del sistema: {tema_sistema}")
+        self.es_oscuro = tema_sistema
+        
+        # Valores vacíos para los campos técnicos
         self.db_path_field.value = ""
         self.output_path_field.value = ""
         self.rut_field.value = ""
+        
+        # Guardar automáticamente para que el bug del switch desaparezca
+        config_inicial = {
+            "ruta_db": "",
+            "ruta_output": "",
+            "rut_empresa": "",
+            "dark_mode": self.es_oscuro
+        }
+        try:
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(config_inicial, f, indent=4)
+            log_debug(self, "CONFIG", "✓ Archivo config.json inicial creado con éxito.")
+        except Exception as e:
+            log_debug(self, "CONFIG", f"✗ No se pudo crear el config inicial: {e}")
 
-    #cargar usuarios
-    self.usuarios_data = seguridad.listar_usuarios()
-    
+    # 3. SINCRONIZACIÓN FINAL: Forzar que la UI coincida con el estado lógico
     self.page.theme_mode = ft.ThemeMode.DARK if self.es_oscuro else ft.ThemeMode.LIGHT
+    
+    if hasattr(self, "tema_switch") and self.tema_switch is not None:
+        self.tema_switch.value = self.es_oscuro # Forzamos la posición del Switch
+    
     actualizar_estilos_campos(self)
-    self.page.update()
+    self.page.update() # Refresco vital para Flet
 
 def refrescar_años_db(self):
     """Obtiene años y muestra diálogo si hay error o está vacío"""
@@ -227,13 +237,12 @@ def generar_nomina(self):
     """Genera la nómina usando AutoExcel"""
     nomina = self.nomina_field.value
     año = self.año_dropdown.value
-    usar_plantilla_banco = self.plantilla_banco_check.value
     
     log_debug(self, "NOMINA", "╔═══════════════════════════════════════╗")
     log_debug(self, "NOMINA", "║   INICIANDO GENERACIÓN DE NÓMINA    ║")
     log_debug(self, "NOMINA", "╚═══════════════════════════════════════╝")
     log_debug(self, "NOMINA", f"Input recibido → Nómina: '{nomina}', Año: '{año}'")
-    log_debug(self, "NOMINA", f"Usar plantilla banco: {'Sí' if usar_plantilla_banco else 'No'}")
+    log_debug(self, "NOMINA", f"Usar plantilla banco: {'Sí' if self.plantilla_r2_check.value else 'No'}")
 
     
     # 1. Validaciones iniciales
@@ -278,50 +287,40 @@ def generar_nomina(self):
         
         try:
             cursor = conn.cursor()
-            log_debug(self, "NOMINA", f"→ Consultando datos para nómina {nomina}, año {año}...")
-            
             datos = AE.datos_egreso(cursor, int(nomina), int(año))
             
             if not datos:
-                log_debug(self, "NOMINA", f"⚠️ No se encontraron registros para nómina {nomina} en año {año}")
-                mostrar_dialogo(self, 
-                    "Advertencia", 
-                    f"No se encontraron registros para la nómina {nomina} en el año {año}", 
-                    True
-                )
+                mostrar_dialogo(self, "Advertencia", "No se encontraron registros.", True)
                 return
-            
-            log_debug(self, "NOMINA", f"✓ {len(datos)} registros obtenidos de la BD")
 
-            
-            # 3. Generar el archivo Excel
-            log_debug(self, "NOMINA", "→ Generando archivo Excel...")
-            total_pago = AE.llenar_nomina_xlsx(datos, nomina, año, rut_empresa)
+            # Lista para acumular los mensajes de éxito de cada módulo
+            mensajes_exito = []
 
+            # 1. Generar Nómina Estándar
+            if self.plantilla_nomina_check.value:
+                log_debug(self, "NOMINA", "checkbox de plantilla banco está activo, intentando generar Nómina Estándar...")
+                resultado_nomina = AE.llenar_nomina_xlsx(datos, nomina, año, rut_empresa)
+                if resultado_nomina:
+                    mensajes_exito.append(resultado_nomina)
+                else:
+                    mostrar_dialogo(self, "Error", "Fallo al generar Nómina Estándar", True)
+                    return
 
-            if usar_plantilla_banco:
-                log_debug(self, "NOMINA", "→ Generando Plantilla Banco (R2)...")
-                AE.llenarR2(datos, nomina, año)
-            
-            if total_pago is not None:
-                log_debug(self, "NOMINA", f"✓✓✓ NÓMINA GENERADA EXITOSAMENTE")
-                log_debug(self, "NOMINA", f"  • Registros procesados: {len(datos)}")
-                log_debug(self, "NOMINA", f"  • Total a pagar: ${total_pago:,.0f}")
-                log_debug(self, "NOMINA", f"  • Ubicación: {ruta_salida}")
-                
-                mensaje_exito = (
-                    f"Nómina: {nomina}\n"
-                    f"Año: {año}\n"
-                    f"Registros: {len(datos)}\n"
-                    f"Total a Pagar: ${total_pago:,.0f}\n\n"
-                    f"Ubicación: {ruta_salida}"
-                ).replace(",", ".")
+            # 2. Generar R2 si aplica
+            if self.plantilla_r2_check.value:
+                log_debug(self, "NOMINA", "checkbox de plantilla banco está activo, intentando generar R2...")
+                mensaje_r2 = AE.llenarR2(datos, nomina, año)
+                if mensaje_r2:
+                    mensajes_exito.append(mensaje_r2)
+                else:
+                    log_debug(self, "NOMINA", "⚠️ Error al generar R2 (continuando...)")
 
-                mostrar_dialogo(self, "Nómina Generada con Éxito", mensaje_exito)
-            else:
-                log_debug(self, "NOMINA", "✗✗✗ ERROR: llenar_nomina_xlsx retornó None")
-                mostrar_dialogo(self, "Error", "Ocurrió un error al generar el archivo Excel", True)
-                
+            # 3. Mostrar Diálogo Consolidado
+            if mensajes_exito:
+                cuerpo_mensaje = "\n".join(mensajes_exito)
+                mostrar_dialogo(self, "Proceso Finalizado", cuerpo_mensaje)
+                log_debug(self, "NOMINA", "✓✓✓ Mensaje de éxito mostrado")
+
         finally:
             conn.close()
             log_debug(self, "NOMINA", "Conexión a BD cerrada")
@@ -417,8 +416,6 @@ def cambiar_tema_handler(self):
     # 2. Aplicar modo a la página
     self.page.theme_mode = ft.ThemeMode.DARK if self.es_oscuro else ft.ThemeMode.LIGHT
     
-    # 3. Actualizar el label del switch (opcional, para que cambie el texto)
-    self.tema_switch.label = "Modo Oscuro" if self.es_oscuro else "Modo Claro"
 
     # 4. Sincronizar bordes de campos y actualizar
     actualizar_estilos_campos(self)
@@ -427,8 +424,12 @@ def cambiar_tema_handler(self):
 
 
 def actualizar_estilos_campos(self):
-    """Actualiza solo los colores de los bordes según el tema actual"""
+    """Actualiza solo los colores de los bordes y el fondo de la lista según el tema actual"""
     color_borde = ft.Colors.WHITE if self.es_oscuro else ft.Colors.BLACK
+    
+    # Definimos colores para el contenedor de la lista
+    fondo_lista = ft.Colors.GREY_900 if self.es_oscuro else ft.Colors.BLUE_GREY_50
+    borde_lista = ft.Colors.GREY_700 if self.es_oscuro else ft.Colors.OUTLINE_VARIANT
     
     lista_campos = [
         self.nomina_field, 
@@ -442,33 +443,19 @@ def actualizar_estilos_campos(self):
         self.nueva_pass_field
     ]
     
-    
     for campo in lista_campos:
         if campo:
             campo.border_color = color_borde
             campo.focused_border_color = color_borde
+            
+    # Actualizamos el contenedor de la lista si existe
+    if hasattr(self, "lista_container") and self.lista_container:
+        self.lista_container.bgcolor = fondo_lista
+        self.lista_container.border = ft.border.all(1, borde_lista)
     
-    log_debug(self, "TEMA", f"Bordes actualizados a: {color_borde}")
+    log_debug(self, "TEMA", f"Bordes y lista actualizados. Modo oscuro: {self.es_oscuro}")
 
-# def cambiar_sub_config(self, index):
-#     """Cambia la sub-vista dentro de la configuración"""
-#     # 1. Actualizar el índice del rail (por si se llama desde fuera)
-#     self.nav_rail.selected_index = index
-    
-#     # 2. Gestionar visibilidad de las columnas
-#     self.vista_parametros.visible = (index == 0)
-#     self.vista_usuarios.visible = (index == 1)
-    
-#     # 3. Asignar la vista activa al área de contenido
-#     if index == 0:
-#         self.content_area.content = self.vista_parametros
-#         log_debug(self, "CONFIG", "Sub-vista: PARÁMETROS")
-#     elif index == 1:
-#         actualizar_lista_usuarios(self)
-#         self.content_area.content = self.vista_usuarios
-#         log_debug(self, "CONFIG", "Sub-vista: USUARIOS")
-        
-#     self.page.update()
+
 
 def cambiar_sub_config(self, index):
     """Cambia la sub-vista dentro de la configuración y actualiza el título"""

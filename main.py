@@ -92,7 +92,7 @@ class AutoExcelApp:
         else:
             # Modo normal: guardar en archivo
             try:
-                file_handler = logging.FileHandler('autoexcel.log', encoding='utf-8')
+                file_handler = logging.FileHandler('autoexcel.log', encoding='utf-8', mode='w') 
                 file_handler.setFormatter(formatter)
                 self.logger.addHandler(file_handler)
                 log_debug(self, "INIT", "✓ Handler de archivo activado (autoexcel.log)")

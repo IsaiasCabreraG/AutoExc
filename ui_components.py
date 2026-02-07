@@ -28,7 +28,9 @@ def build_ui(self):
         log_debug(self, "UI", "✓ Vista de debug agregada")
 
     cambiar_ventana(self, "login")
+    cargar_configuracion(self)
     self.page.update()
+
 
 def build_main_view(self):
     self.nomina_field = ft.TextField(
@@ -40,7 +42,9 @@ def build_main_view(self):
             allow=True, 
             regex_string=r"^[0-9]*$", 
             replacement_string=""
-        )
+        ),
+        on_submit=lambda _: generar_nomina(self)
+        
     )
     
     self.año_dropdown = ft.Dropdown(
@@ -50,10 +54,35 @@ def build_main_view(self):
         options=[ft.dropdown.Option("----")],
         disabled=True
     )
+    estilo_texto_check = ft.TextStyle(size=13)
 
-    self.plantilla_banco_check = ft.Checkbox(
+    self.plantilla_nomina_check = ft.Checkbox(
+        label="Plantilla IConstruye",
+        value=True,
+        label_style=estilo_texto_check,
+        visual_density=ft.VisualDensity.COMPACT,
+    )
+    
+    self.plantilla_r2_check = ft.Checkbox(
         label="Plantilla Banco",
-        value=False
+        value=True,
+        label_style=estilo_texto_check,
+        visual_density=ft.VisualDensity.COMPACT,
+    )
+    
+    self.lista_container = ft.Container(
+        content=ft.Column(
+            controls=[
+                self.plantilla_nomina_check,
+                self.plantilla_r2_check,
+            ],
+            spacing=0, 
+            horizontal_alignment=ft.CrossAxisAlignment.START,
+        ),
+        padding=ft.padding.symmetric(vertical=8, horizontal=20),
+        border=ft.border.all(1, ft.Colors.OUTLINE_VARIANT),
+        bgcolor=ft.Colors.BLUE_GREY_50 if not self.es_oscuro else ft.Colors.GREY_900, 
+        width=280,
     )
     
     return ft.Container(
@@ -74,35 +103,45 @@ def build_main_view(self):
                         )
                     ],
                 ),
-                ft.Container(height=50),
-                ft.Text("Ingrese Nómina y Año:", size=14),
+                
+                ft.Container(height=40),
+                ft.Text("Ingrese Nómina y Año:", size=14, weight=ft.FontWeight.W_500),
                 ft.Row(
                     controls=[self.nomina_field, self.año_dropdown],
                     alignment=ft.MainAxisAlignment.CENTER,
                     spacing=10
                 ),
+                
+                ft.Container(height=5),
+                ft.Text("Plantillas a rellenar", size=14,),
+
+                # LISTA CON FONDO DIFERENCIADO Y MÁS ANCHA
                 ft.Row(
-                    controls=[self.plantilla_banco_check],
-                    alignment=ft.MainAxisAlignment.CENTER # Esto centra el checkbox horizontalmente
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    controls=[
+                        self.lista_container
+                    ]
                 ),
-                ft.Container(height=20),
-                        ft.ElevatedButton(
-                            text="Generar Nómina",
-                            width=200,
-                            height=45,
-                            on_click=lambda _: generar_nomina(self)
-                        )
+                
+                ft.Container(height=25),
+                ft.ElevatedButton(
+                    text="Generar Nómina",
+                    width=200,
+                    height=45,
+                    on_click=lambda _: generar_nomina(self)
+                )
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         visible=False
     )
 
+
 def build_config_view(self):
     # 1. Componentes del Header
     self.tema_switch = ft.Switch(
         label="Modo Oscuro",
-        value=self.es_oscuro, # Se inicializa según el estado actual
+        value=self.es_oscuro, 
         active_color=ft.Colors.BLUE_400,
         on_change=lambda _: cambiar_tema_handler(self)
     )
@@ -213,7 +252,7 @@ def build_config_view(self):
             ft.Row([
                 ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda _: confirmar_salida(self)),
                 self.config_title,
-                self.tema_switch, # <--- Ahora usamos el Switch
+                self.tema_switch,
             ]),
             ft.Divider(height=1),
             ft.Row([
@@ -289,20 +328,17 @@ def verificar_primer_usuario(self):
     if not usuarios:
         log_debug(self, "AUTH", "No se detectaron usuarios. Solicitando creación de administrador inicial.")
         
-        user_input = ft.TextField(label="Usuario Administrador", width=280, autofocus=True)
-        pass_input = ft.TextField(label="Contraseña", width=280, password=True, can_reveal_password=True)
-
+        # 1. Definimos la función de creación primero para poder referenciarla
         def crear_primer_admin(e):
             u = user_input.value.strip()
             p = pass_input.value.strip()
             
             if u and p:
-                # Forzamos el rol 'admin' por ser el primero
                 exito, msg = seguridad.registrar_usuario(u, p, rol="admin")
                 if exito:
                     dialogo_inicial.open = False
                     self.page.update()
-                    mostrar_dialogo(self, "Configuración Inicial", f"Administrador '{u}' creado con éxito. Ya puede iniciar sesión.")
+                    mostrar_dialogo(self, "Configuración Inicial", f"Administrador '{u}' creado con éxito.")
                 else:
                     user_input.error_text = msg
                     self.page.update()
@@ -310,8 +346,23 @@ def verificar_primer_usuario(self):
                 user_input.error_text = "Complete todos los campos"
                 self.page.update()
 
+        # 2. Agregamos on_submit a los inputs
+        user_input = ft.TextField(
+            label="Usuario Administrador", 
+            width=280, 
+            autofocus=True,
+            on_submit=crear_primer_admin # <--- ENTER AQUÍ
+        )
+        pass_input = ft.TextField(
+            label="Contraseña", 
+            width=280, 
+            password=True, 
+            can_reveal_password=True,
+            on_submit=crear_primer_admin # <--- ENTER AQUÍ
+        )
+
         dialogo_inicial = ft.AlertDialog(
-            modal=True, # No se puede cerrar haciendo clic fuera
+            modal=True,
             title=ft.Text("Primer Inicio: Crear Administrador"),
             content=ft.Column([
                 ft.Text("No se encontraron usuarios en el sistema.\nPor favor, cree la cuenta de administrador inicial."),
@@ -327,4 +378,5 @@ def verificar_primer_usuario(self):
         self.page.overlay.append(dialogo_inicial)
         dialogo_inicial.open = True
         self.page.update()
-    log_debug(self, "AUTH", "Usuarios existentes detectados. Continuando con el flujo normal de login.")
+    
+    log_debug(self, "AUTH", "Continuando con el flujo normal.")

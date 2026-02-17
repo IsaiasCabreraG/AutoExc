@@ -4,6 +4,7 @@ import os
 import json
 import AutoExcel as AE
 import re
+from dotenv import load_dotenv
 
 
 
@@ -123,10 +124,10 @@ def guardar_configuracion(self):
     log_debug(self, "CONFIG", f"  • Tema oscuro: {config_data['dark_mode']}")
     
     try:
-        with open("config.json", "w", encoding="utf-8") as f:
+        with open("internal/config.json", "w", encoding="utf-8") as f:
             json.dump(config_data, f, indent=4)
         
-        log_debug(self, "CONFIG", "✓ Archivo config.json guardado exitosamente")
+        log_debug(self, "CONFIG", "✓ Archivo internal/config.json guardado exitosamente")
         mostrar_dialogo(self, "Éxito", "Configuración guardada correctamente.")
         cambiar_ventana(self, "main")
         log_debug(self, "CONFIG", "═══ GUARDADO COMPLETADO ═══")
@@ -141,16 +142,19 @@ def cargar_configuracion(self):
     # 1. Detectar el estado del sistema operativo inmediatamente
     brillo_sistema = self.page.platform_brightness
     tema_sistema = brillo_sistema == ft.Brightness.DARK or brillo_sistema is None
+    self.correo_remitente, self.correo_password = seguridad.obtener_credenciales_email()
+    actualizar_vista_correos(self)
     
-    if os.path.exists("config.json"):
+    if os.path.exists("internal/config.json"):
         try:
-            with open("config.json", "r", encoding="utf-8") as f:
+            with open("internal/config.json", "r", encoding="utf-8") as f:
                 data = json.load(f)
                 self.db_path_field.value = data.get("ruta_db", "")
                 self.output_path_field.value = data.get("ruta_output", "")
                 self.rut_field.value = data.get("rut_empresa", "")
                 # Priorizar lo que diga el JSON
                 self.es_oscuro = data.get("dark_mode", tema_sistema) 
+                self.correos_banco = data.get("correos_banco", [])
                 
                 log_debug(self, "CONFIG", f"✓ Cargado desde JSON. Modo Oscuro: {self.es_oscuro}")
         except Exception as e:
@@ -158,7 +162,7 @@ def cargar_configuracion(self):
             self.es_oscuro = tema_sistema
     else:
         # 2. SI NO HAY JSON: Creamos uno nuevo con la preferencia del sistema
-        log_debug(self, "CONFIG", f"⚠️ Sin config.json. Creando inicial con tema del sistema: {tema_sistema}")
+        log_debug(self, "CONFIG", f"⚠️ Sin internal/config.json. Creando inicial con tema del sistema: {tema_sistema}")
         self.es_oscuro = tema_sistema
         
         # Valores vacíos para los campos técnicos
@@ -174,9 +178,9 @@ def cargar_configuracion(self):
             "dark_mode": self.es_oscuro
         }
         try:
-            with open("config.json", "w", encoding="utf-8") as f:
+            with open("internal/config.json", "w", encoding="utf-8") as f:
                 json.dump(config_inicial, f, indent=4)
-            log_debug(self, "CONFIG", "✓ Archivo config.json inicial creado con éxito.")
+            log_debug(self, "CONFIG", "✓ Archivo internal/config.json inicial creado con éxito.")
         except Exception as e:
             log_debug(self, "CONFIG", f"✗ No se pudo crear el config inicial: {e}")
 
@@ -244,37 +248,49 @@ def generar_nomina(self):
     log_debug(self, "NOMINA", f"Input recibido → Nómina: '{nomina}', Año: '{año}'")
     log_debug(self, "NOMINA", f"Usar plantilla banco: {'Sí' if self.plantilla_r2_check.value else 'No'}")
 
-    
-    # 1. Validaciones iniciales
-    if not nomina or not nomina.isdigit():
-        log_debug(self, "NOMINA", f"✗ Validación fallida: Nómina inválida '{nomina}'")
-        mostrar_dialogo(self, "Error", "Ingrese una nómina válida (solo números)", True)
-        return
-    
-    if not año or año == "----":
-        log_debug(self, "NOMINA", f"✗ Validación fallida: Año no seleccionado '{año}'")
-        mostrar_dialogo(self, "Error", "Seleccione un año válido", True)
-        return
-    
-    log_debug(self, "NOMINA", "✓ Validaciones de entrada pasadas")
-    
-    # 2. Cargar configuración para obtener rutas y RUT
-    if not os.path.exists("config.json"):
-        log_debug(self, "NOMINA", "✗ config.json no existe, redirigiendo a configuración")
-        mostrar_dialogo(self, "Error", "Configure la aplicación antes de generar nóminas", True)
-        cambiar_ventana(self, "config")
-        return
+    self.btn_generar.disabled = True
+    self.btn_generar.text = "Procesando..."
+    self.page.update()
 
-    with open("config.json", "r", encoding="utf-8") as f:
-        config = json.load(f)
-        rut_empresa = config.get("rut_empresa", "")
-        ruta_salida = config.get("ruta_output", "")
-    
-    log_debug(self, "NOMINA", f"Configuración cargada:")
-    log_debug(self, "NOMINA", f"  • RUT Empresa: {rut_empresa}")
-    log_debug(self, "NOMINA", f"  • Ruta Salida: {ruta_salida}")
+    log_debug(self, "NOMINA", "═══ INICIANDO PROCESO BLOQUEADO ═══")
+
     
     try:
+        # 1. Validaciones iniciales
+        if not nomina or not nomina.isdigit():
+            log_debug(self, "NOMINA", f"✗ Validación fallida: Nómina inválida '{nomina}'")
+            mostrar_dialogo(self, "Error", "Ingrese una nómina válida (solo números)", True)
+            return
+        
+        if not año or año == "----":
+            log_debug(self, "NOMINA", f"✗ Validación fallida: Año no seleccionado '{año}'")
+            mostrar_dialogo(self, "Error", "Seleccione un año válido", True)
+            return
+        
+        if ((self.reporte_banco_check.value == True) and (self.plantilla_r2_check.value == False)):
+            log_debug(self, "NOMINA", f"✗ Validación fallida: reporte banco  {self.reporte_banco_check.value} pero plantilla banco {self.plantilla_r2_check.value} ")
+            mostrar_dialogo(self, "Error", "No puede generar Reporte PLantilla Banco sin generar Plantilla Banco", True)
+            return
+
+
+        log_debug(self, "NOMINA", "✓ Validaciones de entrada pasadas")
+        
+        # 2. Cargar configuración para obtener rutas y RUT
+        if not os.path.exists("internal/config.json"):
+            log_debug(self, "NOMINA", "✗ internal/config.json no existe, redirigiendo a configuración")
+            mostrar_dialogo(self, "Error", "Configure la aplicación antes de generar nóminas", True)
+            cambiar_ventana(self, "config")
+            return
+
+        with open("internal/config.json", "r", encoding="utf-8") as f:
+            config = json.load(f)
+            rut_empresa = config.get("rut_empresa", "")
+            ruta_salida = config.get("ruta_output", "")
+        
+        log_debug(self, "NOMINA", f"Configuración cargada:")
+        log_debug(self, "NOMINA", f"  • RUT Empresa: {rut_empresa}")
+        log_debug(self, "NOMINA", f"  • Ruta Salida: {ruta_salida}")
+    
         log_debug(self, "NOMINA", "→ Abriendo conexión a base de datos...")
         conn = AE.open_database()
         
@@ -309,7 +325,7 @@ def generar_nomina(self):
             # 2. Generar R2 si aplica
             if self.plantilla_r2_check.value:
                 log_debug(self, "NOMINA", "checkbox de plantilla banco está activo, intentando generar R2...")
-                mensaje_r2 = AE.llenarR2(datos, nomina, año)
+                mensaje_r2 = AE.llenarR2(datos, nomina, año, self.correo_remitente, self.correo_password, self.correos_banco, self.reporte_banco_check.value)
                 if mensaje_r2:
                     mensajes_exito.append(mensaje_r2)
                 else:
@@ -325,13 +341,24 @@ def generar_nomina(self):
             conn.close()
             log_debug(self, "NOMINA", "Conexión a BD cerrada")
             
+            
     except Exception as ex:
         log_debug(self, "NOMINA", f"✗✗✗ EXCEPCIÓN CRÍTICA: {type(ex).__name__}: {ex}")
         import traceback
         log_debug(self, "NOMINA", f"Traceback:\n{traceback.format_exc()}")
         mostrar_dialogo(self, "Error", f"Error crítico:\n{str(ex)}", True)
     
-    log_debug(self, "NOMINA", "╚═══════════════════════════════════════╝")
+    finally:
+        # --- 3. DESBLOQUEAR UI ---
+        # Pase lo que pase (éxito o error), devolvemos el botón a su estado normal
+        self.btn_generar.disabled = False
+        self.btn_generar.text = "Generar Nómina"
+        
+        # self.loader.visible = False
+        
+        self.page.update()
+        log_debug(self, "NOMINA", "═══ PROCESO FINALIZADO Y UI LIBERADA ═══")
+    
 
 
 def mostrar_dialogo(self, titulo, mensaje, es_error=False, acciones=None):
@@ -364,9 +391,9 @@ def confirmar_salida(self):
     
     # 1. Cargar la configuración actual desde el disco para comparar
     config_en_disco = {"ruta_db": "", "ruta_output": "", "rut_empresa": "", "dark_mode": ""}
-    if os.path.exists("config.json"):
+    if os.path.exists("internal/config.json"):
         try:
-            with open("config.json", "r", encoding="utf-8") as f:
+            with open("internal/config.json", "r", encoding="utf-8") as f:
                 config_en_disco = json.load(f)
         except Exception as e:
             log_debug(self, "NAV", f"✗ Error al leer config para comparar: {e}")
@@ -440,7 +467,10 @@ def actualizar_estilos_campos(self):
         self.user_field,
         self.pass_field,
         self.nuevo_usuario_field,
-        self.nueva_pass_field
+        self.nueva_pass_field,
+        self.nuevo_correo_field,
+        self.pass_remitente_input,
+        self.remitente_input
     ]
     
     for campo in lista_campos:
@@ -461,22 +491,29 @@ def cambiar_sub_config(self, index):
     """Cambia la sub-vista dentro de la configuración y actualiza el título"""
     # 1. Actualizar el índice del rail
     self.nav_rail.selected_index = index
+    self.vista_parametros.visible=False
+    self.vista_usuarios.visible=False
+    self.vista_correos.visible=False
     
     # 2. Gestionar visibilidad y Título
     if index == 0:
         self.config_title.value = "Parámetros del Sistema"
         self.vista_parametros.visible = True
-        self.vista_usuarios.visible = False
         self.content_area.content = self.vista_parametros
         log_debug(self, "CONFIG", "Sub-vista: PARÁMETROS")
     elif index == 1:
         self.config_title.value = "Gestión de Usuarios"
-        self.vista_parametros.visible = False
         self.vista_usuarios.visible = True
         self.content_area.content = self.vista_usuarios
         log_debug(self, "CONFIG", "Sub-vista: USUARIOS")
         # Aprovechamos de refrescar la lista al entrar
         actualizar_lista_usuarios(self)
+    elif index == 2:
+        self.config_title.value = "Gestión de Correos"
+        self.vista_correos.visible = True
+        self.content_area.content = self.vista_correos
+        log_debug(self, "CONFIG", "Sub-vista: CORREOS")
+        actualizar_vista_correos(self)
         
     self.page.update()
 
@@ -537,7 +574,7 @@ def actualizar_lista_usuarios(self):
                         icon_color=ft.Colors.BLUE_GREY_400,
                         tooltip="Cambiar contraseña",
                         visible=es_admin, # <--- Restricción de rol
-                        on_click=lambda e, i=indice: self.editar_usuario_handler(i)
+                        on_click=lambda _: editar_usuario_handler(self,indice)
                     ),
                     ft.IconButton(
                         icon=ft.Icons.DELETE_OUTLINE,
@@ -661,6 +698,178 @@ def editar_usuario_handler(self, nombre_usuario):
     self.page.update()
 
 
+def actualizar_vista_correos(self):
+    """Refresca toda la Vista 3: Remitente (Binario) y Destinatarios (JSON)"""
+    log_debug(self, "EMAIL", "═══ SINCRONIZANDO VISTA DE CORREOS ═══")
+    
+    # ---------------------------------------------------------
+    # PARTE 1: REFRESCAR REMITENTE (Datos Sensibles)
+    # ---------------------------------------------------------
+    email_remitente, pass_app = seguridad.obtener_credenciales_email()
+    self.seccion_remitente_ui.controls.clear()
+
+    if email_remitente and pass_app:
+        self.seccion_remitente_ui.controls.append(
+            ft.Row([
+                ft.Icon(ft.Icons.CHECK_CIRCLE, color=ft.Colors.GREEN_400),
+                ft.Text(f"Configurado: {email_remitente}", size=16, weight=ft.FontWeight.W_500),
+                ft.IconButton(
+                    icon=ft.Icons.EDIT,
+                    icon_color=ft.Colors.BLUE_400,
+                    tooltip="Editar credenciales",
+                    on_click=lambda _: mostrar_edicion_remitente(self, email_remitente)
+                )
+            ], alignment=ft.MainAxisAlignment.CENTER)
+        )
+    else:
+        self.seccion_remitente_ui.controls.extend([
+            ft.Row([self.remitente_input, self.pass_remitente_input], alignment=ft.MainAxisAlignment.CENTER),
+            ft.ElevatedButton(
+                "Guardar Credenciales", 
+                icon=ft.Icons.SAVE,
+                on_click=lambda _: guardar_remitente_handler(self)
+            )
+        ])
+
+    # ---------------------------------------------------------
+    # PARTE 2: REFRESCAR LISTA DE DESTINATARIOS (JSON)
+    # ---------------------------------------------------------
+    try:
+        if os.path.exists("internal/config.json"):
+            with open("internal/config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+                correos_actuales = config.get("correos_banco", [])
+        else:
+            correos_actuales = []
+    except Exception as e:
+        log_debug(self, "USER", f"✗ Error al leer internal/config.json: {e}")
+        correos_actuales = []
+
+    # Permisos de Admin
+    rol_actual = self.usuario_logueado.get("rol", "user") if self.usuario_logueado else "user"
+    es_admin = (rol_actual.lower() == "admin")
+    
+    if hasattr(self, "barra_creacion_correos"):
+        self.barra_creacion_correos.visible = es_admin
+
+    self.lista_correos_ui.controls.clear()
+    
+    if not correos_actuales:
+        self.lista_correos_ui.controls.append(
+            ft.Container(
+                content=ft.Text("No hay destinatarios registrados", color=ft.Colors.GREY_500, italic=True),
+                padding=20, alignment=ft.alignment.center
+            )
+        )
+    else:
+        for correo in correos_actuales:
+            fila = ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.MARK_EMAIL_READ_OUTLINED, color=ft.Colors.BLUE_400),
+                    ft.Text(correo, size=15),
+                    ft.Container(expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.DELETE_OUTLINE,
+                        icon_color=ft.Colors.RED_400,
+                        visible=es_admin,
+                        on_click=lambda e, u=correo: eliminar_correo_handler(self, u)
+                    ),
+                ]),
+                padding=ft.padding.symmetric(horizontal=15, vertical=2),
+                border=ft.border.only(bottom=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT)),
+            )
+            self.lista_correos_ui.controls.append(fila)
+
+    # ---------------------------------------------------------
+    # FINALIZACIÓN
+    # ---------------------------------------------------------
+    log_debug(self, "EMAIL", "✓ Vista de correos sincronizada")
+    self.page.update()
+
+
+
+def agregar_correo_handler(self):
+    correo = self.nuevo_correo_field.value.strip()
+    
+    
+    if not correo:
+        mostrar_dialogo(self, "Campo Vacío", "Por favor, ingrese un correo electrónico.", True)
+        return
+
+    if validar_formato_correo(correo) is False:
+        log_debug(self, "USER", f"✗ Validación fallida: Formato de correo inválido '{correo}'")
+        mostrar_dialogo(self, "Formato Inválido", 
+                        "El formato del correo electrónico no es válido.\nEjemplo: usuario@empresa.cl", True)
+        self.nuevo_correo_field.value = ""
+        return
+
+    # 2. Lógica de guardado en internal/config.json
+    try:
+        # Aseguramos que el archivo existe o manejamos su lectura
+        if not os.path.exists("internal/config.json"):
+             config = {}
+        else:
+            with open("internal/config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+
+        correos_banco = config.get("correos_banco", [])
+        
+        if correo in correos_banco:
+            mostrar_dialogo(self, "Error", "El correo ya está registrado en la lista.", True)
+            self.nuevo_correo_field.value = ""
+            return
+        correos_banco.append(correo)
+        config["correos_banco"] = correos_banco
+        
+        with open("internal/config.json", "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4)
+        
+        log_debug(self, "USER", f"✓ Correo '{correo}' validado y agregado a configuración")
+        
+        # 3. Limpieza y actualización de UI
+        actualizar_vista_correos(self)
+        self.nuevo_correo_field.value = ""
+        self.nuevo_correo_field.error_text = None # Limpia errores visuales si los hubiera
+        
+    except Exception as e:
+        log_debug(self, "USER", f"✗ Error al agregar correo: {e}")
+        mostrar_dialogo(self, "Error", f"No se pudo agregar el correo: {e}", True)
+
+    self.page.update()
+
+
+def eliminar_correo_handler(self, correo):
+    """Elimina un correo de internal/config.json y actualiza la UI"""
+    def confirmar_borrado(e):
+        self.page.overlay[-1].open = False # Cerrar diálogo
+        try:
+            with open("internal/config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+                correos_banco = config.get("correos_banco", [])
+                if correo in correos_banco:
+                    correos_banco.remove(correo)
+                    config["correos_banco"] = correos_banco
+            with open("internal/config.json", "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4)
+            log_debug(self, "USER", f"✓ Correo '{correo}' eliminado de configuración")
+            actualizar_vista_correos(self)
+        except Exception as e:
+            log_debug(self, "USER", f"✗ Error al eliminar correo: {e}")
+            mostrar_dialogo(self, "Error", f"No se pudo eliminar el correo: {e}", True)
+
+    # Diálogo de confirmación
+    mostrar_dialogo(
+        self,
+        "Confirmar eliminación",
+        f"¿Estás seguro de que deseas eliminar el correo '{correo}'?",
+        acciones=[
+            ft.TextButton("Eliminar", on_click=confirmar_borrado, icon=ft.Icons.DELETE, icon_color="red"),
+            ft.TextButton("Cancelar", on_click=lambda e: self.page.overlay.__getitem__(-1).__setattr__('open', False) or self.page.update())
+        ]
+    )
+
+
+
 def cerrar_sesion_handler(self):
     """Limpia los datos del usuario activo y regresa al login"""
     log_debug(self, "AUTH", f"Cerrando sesión del usuario: {self.usuario_logueado.get('user') if self.usuario_logueado else 'Desconocido'}")
@@ -678,3 +887,58 @@ def cerrar_sesion_handler(self):
     cambiar_ventana(self, "login")
     
     log_debug(self, "NAV", "✓ Sesión cerrada, redirigido a Login")
+
+
+
+def guardar_remitente_handler(self):
+    email = self.remitente_input.value
+    password = self.pass_remitente_input.value
+    
+    if not email or not password:
+        mostrar_dialogo(self, "Error", "Debe completar ambos campos", True)
+        return
+    
+    if validar_formato_correo(email) is False:
+        log_debug(self, "USER", f"✗ Validación fallida: Formato de correo inválido '{email}'")
+        mostrar_dialogo(self, "Formato Inválido", 
+                        "El formato del correo electrónico no es válido.\nEjemplo: ejemplo@gmail.com", True)
+        return
+        
+    seguridad.guardar_credenciales_email(email, password)
+    self.remitente_input.value = ""
+    self.pass_remitente_input.value = ""
+    cargar_configuracion(self)
+    actualizar_vista_correos(self)
+    mostrar_dialogo(self, "Éxito", "Credenciales de remitente guardadas de forma segura.")
+
+def mostrar_edicion_remitente(self, email_actual):
+    # Simplemente limpiamos los datos en seguridad y refrescamos la vista 
+    # para que vuelvan a salir los campos de entrada
+    self.remitente_input.value = email_actual
+    self.seccion_remitente_ui.controls.clear()
+    self.seccion_remitente_ui.controls.extend([
+        ft.Row([self.remitente_input, self.pass_remitente_input], alignment=ft.MainAxisAlignment.CENTER),
+        ft.Row([
+            ft.ElevatedButton("Actualizar", on_click=lambda _: guardar_remitente_handler(self)),
+            ft.TextButton("Cancelar", on_click=lambda _:actualizar_vista_correos(self))
+        ], alignment=ft.MainAxisAlignment.CENTER)
+    ])
+    self.page.update()
+
+def validar_formato_correo(correo: str) -> bool:
+    """
+    Verifica si un string tiene una estructura de correo electrónico válida.
+    Retorna True si es válido, False si no.
+    """
+    # Explicación del patrón:
+    # ^[a-zA-Z0-9._%+-]+ : Empieza con letras, números o caracteres permitidos.
+    # @                  : Debe contener un arroba.
+    # [a-zA-Z0-9.-]+     : Dominio con letras o números.
+    # \.[a-zA-Z]{2,}$    : Punto seguido de al menos 2 letras (com, cl, org, etc).
+    
+    patron = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    
+    if correo and re.match(patron, correo.strip()):
+        return True
+    return False
+        

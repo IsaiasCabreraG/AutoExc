@@ -4,6 +4,9 @@ import os
 import json 
 import sys
 import logging
+import io
+import smtplib
+from utils import *
 
 # Configurar logger para este módulo
 logger = logging.getLogger("AutoExcel")
@@ -45,20 +48,20 @@ def open_database():
     """Busca la configuración en el JSON y abre la conexión automáticamente."""
     log_debug("DB_CONN", "→ Iniciando conexión a base de datos...")
     
-    # 1. Verificar si existe el config.json
-    if not os.path.exists("config.json"):
-        log_debug("DB_CONN", "✗ No se encontró config.json")
+    # 1. Verificar si existe el internal/config.json
+    if not os.path.exists("internal/config.json"):
+        log_debug("DB_CONN", "✗ No se encontró internal/config.json")
         return None
 
     # 2. Leer la ruta desde el JSON
     try:
-        with open("config.json", "r", encoding="utf-8") as f:
+        with open("internal/config.json", "r", encoding="utf-8") as f:
             config = json.load(f)
             db_path = config.get("ruta_db")
         
         log_debug("DB_CONN", f"Ruta DB desde config: {db_path}")
     except Exception as e:
-        log_debug("DB_CONN", f"✗ Error al leer config.json: {e}")
+        log_debug("DB_CONN", f"✗ Error al leer internal/config.json: {e}")
         return None
 
     if not db_path:
@@ -217,18 +220,18 @@ def llenar_nomina_xlsx(datos_db, numero_nomina, año, RutEmpresa=""):
     log_debug("EXCEL", f"  • RUT Empresa: {RutEmpresa}")
     log_debug("EXCEL", f"  • Registros a procesar: {len(datos_db)}")
 
-    if not os.path.exists("config.json"):
-        log_debug("EXCEL", "✗ No se encontró config.json para obtener la ruta de salida")
+    if not os.path.exists("internal/config.json"):
+        log_debug("EXCEL", "✗ No se encontró internal/config.json para obtener la ruta de salida")
         return None
 
     try:
-        with open("config.json", "r", encoding="utf-8") as f:
+        with open("internal/config.json", "r", encoding="utf-8") as f:
             config = json.load(f)
             carpeta_salida = config.get("ruta_output", "")
         
         log_debug("EXCEL", f"Carpeta de salida: {carpeta_salida}")
     except Exception as e:
-        log_debug("EXCEL", f"✗ Error al leer config.json: {e}")
+        log_debug("EXCEL", f"✗ Error al leer internal/config.json: {e}")
         return None
 
     if not carpeta_salida or not os.path.exists(carpeta_salida):
@@ -321,31 +324,37 @@ def llenar_nomina_xlsx(datos_db, numero_nomina, año, RutEmpresa=""):
         log_debug("EXCEL", f"Traceback:\n{traceback.format_exc()}")
         raise e
 
-def llenarR2(datos_db, numero_nomina, año):
+def llenarR2(datos_db, numero_nomina, año, user, app_pasword, correos_enviar, enviarBool):
     """
-    Llena la plantilla de Excel para la Plantilla Banco (R2) 
-    agrupando facturas por proveedor. Si faltan correos, devuelve un error.
+    Genera la nómina R2 en memoria. 
+    Si enviarBool es True, requiere éxito en el envío de correo para guardar en disco.
     """
     log_debug("EXCEL", "╔═══════════════════════════════════════╗")
     log_debug("EXCEL", "║      GENERANDO PLANTILLA BANCO R2     ║")
     log_debug("EXCEL", "╚═══════════════════════════════════════╝")
 
-    # 1. Obtener ruta de salida desde config.json
-    if not os.path.exists("config.json"):
-        return "[ERROR] Plantilla Banco no generada: No se encontró config.json"
+    # 1. VALIDACIÓN INICIAL DE CREDENCIALES (Solo si se va a enviar correo)
+    if enviarBool and (not user or not app_pasword):
+        log_debug("EXCEL", "✗ Abortado: Se requiere envío de correo pero faltan credenciales del remitente.")
+        return "[ERROR] R2 no generada: Configure el correo y clave en la pestaña de Correos."
+
+    if not os.path.exists("internal/config.json"):
+        return "[ERROR] R2 no generada: No se encontró internal/config.json"
 
     try:
-        with open("config.json", "r", encoding="utf-8") as f:
+        # 2. CARGAR CONFIGURACIÓN PARA RUTA DE SALIDA
+        with open("internal/config.json", "r", encoding="utf-8") as f:
             config = json.load(f)
             carpeta_salida = config.get("ruta_output", "")
         
         if not carpeta_salida or not os.path.exists(carpeta_salida):
-            return "[ERROR] Plantilla Banco no generada: Ruta de salida no válida"
+            return "[ERROR] R2 no generada: Ruta de salida no válida en configuración."
 
-        # 2. Agrupamiento y Validación de Correos
+        # 3. AGRUPAMIENTO DE DATOS Y VALIDACIÓN DE CORREOS PROVEEDORES
         agrupados = {}
         proveedores_sin_correo = []
         emails_cargados = 0
+        monto_total_nomina = 0
 
         for registro in datos_db:
             rut = str(registro['Rut Proovedor']).replace(".", "").replace("-", "")
@@ -353,99 +362,101 @@ def llenarR2(datos_db, numero_nomina, año):
             
             if rut not in agrupados:
                 email_actual = registro.get('Email', '')
-                
-                # Validación estricta de correo
                 if not email_actual or str(email_actual).strip() in ["S/E", "sin@email.cl", "", "None"]:
                     if razon_social not in proveedores_sin_correo:
                         proveedores_sin_correo.append(razon_social)
                 else:
-                    # Si el proveedor es nuevo y tiene correo válido, lo contamos
                     emails_cargados += 1
 
                 agrupados[rut] = {
-                    "rut": rut,
-                    "razon_social": razon_social,
-                    "cta_abono": registro['Cuenta Cte'],
-                    "cod_banco": registro['Cod Banco'],
-                    "modalidad": "003",
-                    "facturas": [],
-                    "monto_total_abonado": 0,
-                    "mail": email_actual 
+                    "rut": rut, "razon_social": razon_social, "cta_abono": registro['Cuenta Cte'],
+                    "cod_banco": registro['Cod Banco'], "modalidad": "003", "facturas": [],
+                    "monto_total_abonado": 0, "mail": email_actual 
                 }
             
-            # Limpieza del número de documento para la glosa (evita el .0)
             num_doc_raw = str(registro['N documento'])
             num_doc_limpio = str(int(float(num_doc_raw))) if num_doc_raw.replace('.','',1).isdigit() else num_doc_raw
 
-            agrupados[rut]["facturas"].append({
-                "numero": num_doc_limpio,
-                "monto": registro['Monto Documento']
-            })
+            agrupados[rut]["facturas"].append({"numero": num_doc_limpio, "monto": registro['Monto Documento']})
             agrupados[rut]["monto_total_abonado"] += registro['Monto Documento']
+            monto_total_nomina += registro['Monto Documento']
 
-        # 3. SI FALTAN CORREOS: Retornar error descriptivo
         if proveedores_sin_correo:
             log_debug("EXCEL", f"⚠️ R2 cancelada: Faltan {len(proveedores_sin_correo)} correos")
-            lista_errores = ", ".join(proveedores_sin_correo)
-            return f"[ERROR] Plantilla Banco no generada, faltan correos para: {lista_errores}"
+            return f"[ERROR] R2 no generada, faltan correos para: {', '.join(proveedores_sin_correo)}"
 
-        # 4. Procesar Excel
-        nombre_archivo = f"R2_Nomina_{numero_nomina}-{año}.xlsx"
-        ruta_final_salida = os.path.join(carpeta_salida, nombre_archivo)
+        # 4. PROCESAR EXCEL EN MEMORIA (RAM)
         ruta_plantilla = obtener_ruta_recurso("static/R2.xlsx")
-
-        if not os.path.exists(ruta_plantilla):
-            return "[ERROR] Plantilla Banco no generada: No se encontró la plantilla R2.xlsx"
-
         wb = openpyxl.load_workbook(ruta_plantilla)
         ws = wb.active
-        fila_inicio = 2 
-
+        
         for i, (rut, info) in enumerate(agrupados.items()):
-            fila_actual = fila_inicio + i
-            
+            fila_actual = 2 + i
             ws.cell(row=fila_actual, column=1).value = info["rut"]
             ws.cell(row=fila_actual, column=2).value = info["razon_social"]
             ws.cell(row=fila_actual, column=3).value = info["cta_abono"]
             ws.cell(row=fila_actual, column=4).value = info["cod_banco"]
             ws.cell(row=fila_actual, column=5).value = info["modalidad"]
 
-            # Glosa: "Detalle Factura : 101, 102."
             numeros_facturas = [f["numero"] for f in info["facturas"]]
             detalle_glosa = f"Detalle Factura : {', '.join(numeros_facturas)}."
 
-            # Llenado de facturas (Límite 11)
             for idx, fac in enumerate(info["facturas"]):
                 if idx < 11:
-                    col_nro = 7 + (idx * 2)
-                    col_mto = 8 + (idx * 2)
-                    # Conversión segura float -> int para evitar error literal
-                    ws.cell(row=fila_actual, column=col_nro).value = int(float(fac["numero"]))
-                    ws.cell(row=fila_actual, column=col_mto).value = fac["monto"]
+                    ws.cell(row=fila_actual, column=7+(idx*2)).value = int(float(fac["numero"]))
+                    ws.cell(row=fila_actual, column=8+(idx*2)).value = fac["monto"]
 
             ws.cell(row=fila_actual, column=29).value = info["monto_total_abonado"]
             ws.cell(row=fila_actual, column=30).value = info["mail"]
             ws.cell(row=fila_actual, column=31).value = detalle_glosa
 
-        wb.save(ruta_final_salida)
-        log_debug("EXCEL", f"✓ R2 generado: {nombre_archivo}")
+        excel_buffer = io.BytesIO()
+        wb.save(excel_buffer)
+        excel_buffer.seek(0)
+        log_debug("EXCEL", "✓ Estructura Excel generada correctamente en memoria RAM")
+
+        # 5. LÓGICA DE ENVÍO Y GUARDADO FÍSICO
+        nombre_archivo = f"R2_Nomina_{numero_nomina}-{año}.xlsx"
+        resumen_email = ""
+
+        if enviarBool:
+            log_debug("EMAIL", f"→ Iniciando protocolo de notificación (Destinatarios: {len(correos_enviar)})")
+            datos_asunto = {'nomina': numero_nomina, 'año': año}
+            
+            exito_mail, msg_mail = enviarcorreo(user, app_pasword, correos_enviar, datos_asunto, agrupados, monto_total_nomina)
+
+            if exito_mail:
+                log_debug("EMAIL", "✓ Notificación enviada con éxito. Procediendo a guardar archivo.")
+                resumen_email = f"• Notificación: Enviada con éxito a {len(correos_enviar)} destinatarios\n"
+            else:
+                log_debug("EMAIL", f"✗ Fallo en el envío: {msg_mail}. Se aborta el guardado físico.")
+                return f"[ERROR] R2 no generada: El correo de notificación falló ({msg_mail})."
+        else:
+            log_debug("EXCEL", "ℹ El envío de correo está desactivado. Se guardará directamente.")
+            resumen_email = "• Notificación: Desactivada por el usuario\n"
+
+        # 6. GUARDADO EN DISCO (Si llegó aquí, es porque enviarBool era False o el correo fue exitoso)
+        ruta_final_salida = os.path.join(carpeta_salida, nombre_archivo)
+        with open(ruta_final_salida, "wb") as f:
+            f.write(excel_buffer.getbuffer())
         
-        # --- RESUMEN EXITOSO REINSTAURADO ---
-        resumen = (
-            f"Plantilla Banco generada con éxito\n"
+        log_debug("EXCEL", f"✓ Archivo consolidado en disco: {ruta_final_salida}")
+
+        return (
+            f"Plantilla Banco generada correctamente\n"
             f"• Archivo: {nombre_archivo}\n"
-            f"• Proveedores agrupados: {len(agrupados)}\n"
-            f"• Emails cargados: {emails_cargados}/{len(agrupados)}"
+            f"• Proveedores: {len(agrupados)}\n"
+            f"• Emails en glosa: {emails_cargados} / {len(agrupados)}\n"
+            + resumen_email
         )
-        return resumen
 
     except Exception as e:
-        log_debug("EXCEL", f"✗ Error crítico en R2: {e}")
-        return f"[ERROR] Plantilla Banco: No se pudo generar por un error técnico."
+        log_debug("EXCEL", f"✗ Error crítico: {str(e)}")
+        return f"[ERROR] Plantilla Banco: Fallo técnico durante el procesamiento."
     
 def obtener_años_disponibles():
     """
-    Intenta conectar a la DB usando la ruta de config.json 
+    Intenta conectar a la DB usando la ruta de internal/config.json 
     y retorna la lista de años.
     Returns:
         list: Lista de años disponibles en la tabla cwmovim.
@@ -500,6 +511,85 @@ def inspeccionar_tipos_documento():
             conn.close()
     
     return resultados
+
+
+def enviarcorreo( remitente, password, destinatarios, asunto_data, datos_reporte, monto_total):
+    """
+    Construye el HTML y envía el correo.
+    asunto_data: dict con {'nomina': num, 'año': año}
+    datos_reporte: el diccionario 'agrupados' de llenarR2
+    """
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    # 1. Construir Asunto y Cuerpo HTML
+    asunto = f"Detalle Egreso N° {asunto_data['nomina']} ({asunto_data['año']}) pagado"
+    
+    filas_tabla = ""
+    for _, info in datos_reporte.items():
+        monto_fmt = f"${info['monto_total_abonado']:,.0f}".replace(",", ".")
+        numeros_facturas = [f["numero"] for f in info["facturas"]]
+        glosa = f"{', '.join(numeros_facturas)}."
+        rut = info['rut'][:-1] + "-" + info['rut'][-1]
+        filas_tabla += f"""
+            <tr>
+                <td style="border: 1px solid #ddd; width: 36%; padding: 4px; font-size: 13px;">{info['razon_social']}</td>
+                <td style="border: 1px solid #ddd; width: 7%;padding: 4px; font-size: 13px;">{rut}</td>
+                <td style="border: 1px solid #ddd; width: 7%;padding: 4px; font-size: 13px; text-align: right; font-weight: bold;">{monto_fmt}</td>
+                <td style="border: 1px solid #ddd; width: 50%;padding: 4px; font-size: 12px; color: #555;">{glosa}</td>
+            </tr>
+        """
+
+    cuerpo_html = f"""
+    <html>
+    <body style="font-family: 'Segoe UI', sans-serif; color: #333;">
+        <p>De nuestra consideración:\n
+    Se ha procedido a dar orden de pago a los siguientes documentos:<p> 
+        <h2 style="color: #2c3e50; border-top: 2px solid #3498db; padding: 4px;">
+            Resumen de Nómina R2 - N° {asunto_data['nomina']}
+        </h2>
+        <table style="border-collapse: collapse; width: 100%; margin-top: 15px;">
+            <thead>
+                <tr style="background-color: #3498db; color: white;">
+                    <th style="padding: 8px; text-align: left;">RazónsSocial</th>
+                    <th style="padding: 8px; text-align: left;">RUT</th>
+                    <th style="padding: 8px; text-align: right;">Monto pagado</th>
+                    <th style="padding: 8px; text-align: left;">Detalle de facturas</th>
+                </tr>
+            </thead>
+            <tbody>{filas_tabla}</tbody>
+            <tfoot>
+                <tr style="background-color: #f9f9f9; font-weight: bold;">
+                    <td colspan="2" style="padding: 8px; border-top: 2px solid #333; text-align: right;">TOTAL:</td>
+                    <td style="padding: 8px; border-top: 2px solid #333; text-align: right;">${monto_total:,.0f}</td>
+                    <td style="border-top: 2px solid #333;"></td>
+                </tr>
+            </tfoot>
+        </table>
+    </body>
+    </html>
+    """.replace(",", ".")
+
+    # 2. Lógica de Envío (igual que antes pero usando destinatarios limpios)
+    try:
+        destinatarios_limpios = [d.strip() for d in destinatarios if d and str(d).strip()]
+        if not destinatarios_limpios: return True, "Sin destinatarios"
+
+        mensaje = MIMEMultipart()
+        mensaje["From"] = remitente
+        mensaje["To"] = ", ".join(destinatarios_limpios)
+        mensaje["Subject"] = asunto
+        mensaje.attach(MIMEText(cuerpo_html, "html", "utf-8"))
+
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(remitente, password)
+        server.send_message(mensaje)
+        server.quit()
+        return True, f"se enviaron {len(destinatarios_limpios)} correos."
+    except Exception as e:
+        return False, str(e)
 
         
 

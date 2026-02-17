@@ -69,12 +69,20 @@ def build_main_view(self):
         label_style=estilo_texto_check,
         visual_density=ft.VisualDensity.COMPACT,
     )
+
+    self.reporte_banco_check = ft.Checkbox(
+        label="Reporte Plantilla Banco",
+        value=True,
+        label_style=estilo_texto_check,
+        visual_density=ft.VisualDensity.COMPACT,
+    )
     
     self.lista_container = ft.Container(
         content=ft.Column(
             controls=[
                 self.plantilla_nomina_check,
                 self.plantilla_r2_check,
+                self.reporte_banco_check,
             ],
             spacing=0, 
             horizontal_alignment=ft.CrossAxisAlignment.START,
@@ -84,7 +92,15 @@ def build_main_view(self):
         bgcolor=ft.Colors.BLUE_GREY_50 if not self.es_oscuro else ft.Colors.GREY_900, 
         width=280,
     )
-    
+
+    self.btn_generar = ft.ElevatedButton(
+        text="Generar Nómina",
+        width=200,
+        height=45,
+        on_click=lambda _: generar_nomina(self
+        )
+    )
+
     return ft.Container(
         content=ft.Column(
             controls=[
@@ -124,12 +140,7 @@ def build_main_view(self):
                 ),
                 
                 ft.Container(height=25),
-                ft.ElevatedButton(
-                    text="Generar Nómina",
-                    width=200,
-                    height=45,
-                    on_click=lambda _: generar_nomina(self)
-                )
+                self.btn_generar
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         ),
@@ -207,8 +218,41 @@ def build_config_view(self):
         ft.Container(content=self.lista_usuarios_ui, expand=True, padding=ft.padding.only(top=10))
     ], visible=False, expand=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
+
+# --- VISTA 3: CORREOS ---
+    # Campos para cuando NO hay información
+    self.remitente_input = ft.TextField(label="Correo Remitente (Gmail)", width=250, hint_text="ejemplo@gmail.com")
+    self.pass_remitente_input = ft.TextField(label="Contraseña de Aplicación", width=250, password=True, can_reveal_password=True)
+    
+    # Contenedor dinámico para la parte superior
+    self.seccion_remitente_ui = ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
+    self.nuevo_correo_field = ft.TextField(label="Nuevo Destinatario", width=250, prefix_icon=ft.Icons.EMAIL_OUTLINED,height=40,content_padding=ft.padding.only(left=5, right=5, top=5, bottom=5), # Espacio interno
+    text_size=14, on_submit=lambda _: agregar_correo_handler(self))
+    
+    self.barra_creacion_correos = ft.Row([
+        self.nuevo_correo_field,
+        ft.ElevatedButton(
+            "Agregar", 
+            icon=ft.Icons.ADD, 
+            style=ft.ButtonStyle(color=ft.Colors.WHITE, bgcolor=ft.Colors.BLUE_700),
+            on_click=lambda _: agregar_correo_handler(self) 
+        ),
+    ], alignment=ft.MainAxisAlignment.CENTER)
+
+    self.lista_correos_ui = ft.Column(expand=True, scroll=ft.ScrollMode.ADAPTIVE, spacing=0)
+
+    self.vista_correos = ft.Column([
+        ft.Text("Configuración del Remitente", size=18, weight=ft.FontWeight.BOLD),
+        self.seccion_remitente_ui,
+        ft.Divider(height=5),
+        ft.Text("Destinatarios de Reporte Banco", size=18, weight=ft.FontWeight.BOLD),
+        self.barra_creacion_correos, 
+        ft.Container(content=self.lista_correos_ui, expand=True)
+    ], visible=False, expand=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
     # --- ESTRUCTURA DE CONTENIDO ---
-    self.content_area = ft.Container(content=self.vista_parametros, expand=True, padding=ft.padding.all(20))
+    self.content_area = ft.Container(content=self.vista_parametros, expand=True, padding=ft.padding.all(5))
 
     # --- NAVIGATION RAIL (SIN TRAILING) ---
     self.nav_rail = ft.NavigationRail(
@@ -219,6 +263,7 @@ def build_config_view(self):
         destinations=[
             ft.NavigationRailDestination(icon=ft.Icons.SETTINGS_OUTLINED, selected_icon=ft.Icons.SETTINGS, label="Parámetros"),
             ft.NavigationRailDestination(icon=ft.Icons.PERSON_OUTLINED, selected_icon=ft.Icons.PERSON, label="Usuarios"),
+            ft.NavigationRailDestination(icon=ft.Icons.EMAIL_OUTLINED, selected_icon=ft.Icons.EMAIL, label="Correos")
         ],
         on_change=lambda e: cambiar_sub_config(self, e.control.selected_index),
     )

@@ -63,11 +63,16 @@ class AutoExcelApp:
             log_debug(self, "INIT", f"✓ Icono cargado desde: {ruta_icono}")
         else:
             log_debug(self, "INIT", f"⚠️ Icono no encontrado en: {ruta_icono}")
+
+        if not os.path.exists("internal"):
+            os.makedirs("internal")
+            log_debug(self, "INIT", f"Carpeta 'internal' creada exitosamente.")
         
         self.usuarios_data = [] # Lista de diccionarios [usuario1, usuario2, ...]
         self.lista_usuarios_ui = ft.Column(spacing=10, scroll=ft.ScrollMode.ADAPTIVE) 
         self.usuario_logueado = None 
         self.es_oscuro = False    
+        self.correos= []
 
         build_ui(self)
         log_debug(self, "INIT", f"Tema del sistema detectado: {'OSCURO' if self.es_oscuro else 'CLARO'}")
@@ -92,7 +97,7 @@ class AutoExcelApp:
         else:
             # Modo normal: guardar en archivo
             try:
-                file_handler = logging.FileHandler('autoexcel.log', encoding='utf-8', mode='w') 
+                file_handler = logging.FileHandler('internal/autoexcel.log', encoding='utf-8', mode='w') 
                 file_handler.setFormatter(formatter)
                 self.logger.addHandler(file_handler)
                 log_debug(self, "INIT", "✓ Handler de archivo activado (autoexcel.log)")

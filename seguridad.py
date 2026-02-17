@@ -20,7 +20,7 @@ else:
     # Si es el script .py, usamos la carpeta del proyecto
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-ARCHIVO_USUARIOS = os.path.join(BASE_DIR, "sys_data.bin")
+ARCHIVO_USUARIOS = os.path.join(BASE_DIR, "internal/sys_data.bin")
 
 # ============================================================
 # FUNCIONES INTERNAS
@@ -63,6 +63,7 @@ def registrar_usuario(usuario: str, password: str, rol: str = "user") -> tuple:
     return True, f"Usuario {usuario} registrado como {rol}."
 
 def validar_credenciales(usuario: str, password: str) -> bool:
+    if usuario.startswith("__sys_"): return False  # Bloqueo de seguridad
     usuarios = _cargar_archivo()
     if usuario not in usuarios or "pass" not in usuarios[usuario]:
         return False
@@ -84,7 +85,11 @@ def eliminar_usuario(usuario: str) -> bool:
 
 def listar_usuarios():
     usuarios = _cargar_archivo()
-    return [{"user": k, "rol": v.get("rol", "admin")} for k, v in usuarios.items()]
+    return [
+        {"user": k, "rol": v.get("rol", "admin")} 
+        for k, v in usuarios.items() 
+        if not k.startswith("__sys_")
+    ]
 
 def cambiar_password(usuario: str, nueva_password: str) -> bool:
     usuarios = _cargar_archivo()
@@ -94,3 +99,19 @@ def cambiar_password(usuario: str, nueva_password: str) -> bool:
     usuarios[usuario]["pass"] = _hash_password(nueva_password)
     _guardar_archivo(usuarios)
     return True
+
+def guardar_credenciales_email(email: str, password_app: str) -> None:
+    """Guarda credenciales de correo en el binario cifrado."""
+    datos = _cargar_archivo()
+    # Usamos una clave especial que no sea un nombre de usuario
+    datos["__sys_config_correo__"] = {
+        "email": email,
+        "pass_app": password_app
+    }
+    _guardar_archivo(datos)
+
+def obtener_credenciales_email() -> tuple:
+    """Recupera (email, pass_app) del binario cifrado."""
+    datos = _cargar_archivo()
+    config = datos.get("__sys_config_correo__", {})
+    return config.get("email", ""), config.get("pass_app", "")

@@ -13,6 +13,7 @@ def log_debug(self, categoria, mensaje):
         self.logger.debug(f"[{categoria}] {mensaje}")
     
 
+
 def intentar_login(self):
     user = self.user_field.value
     pw = self.pass_field.value
@@ -271,6 +272,16 @@ def generar_nomina(self):
             log_debug(self, "NOMINA", f"✗ Validación fallida: reporte banco  {self.reporte_banco_check.value} pero plantilla banco {self.plantilla_r2_check.value} ")
             mostrar_dialogo(self, "Error", "No puede generar Reporte PLantilla Banco sin generar Plantilla Banco", True)
             return
+        
+        if self.reporte_banco_check.value == True and not self.fecha_field.value:
+            log_debug(self, "NOMINA", f"✗ Validación fallida: Reporte banco activo pero fecha no seleccionada")
+            mostrar_dialogo(self, "Error", "Seleccione una fecha para el reporte de plantilla banco", True)
+            return
+        
+        if self.reporte_banco_check.value == True and self.correos_seleccionados == []:
+            log_debug(self, "NOMINA", f"✗ Validación fallida: Reporte banco activo pero no hay correos que mandar")
+            mostrar_dialogo(self, "Error", "Seleccione destinatarios para el reporte de plantilla banco", True)
+            return
 
 
         log_debug(self, "NOMINA", "✓ Validaciones de entrada pasadas")
@@ -325,7 +336,10 @@ def generar_nomina(self):
             # 2. Generar R2 si aplica
             if self.plantilla_r2_check.value:
                 log_debug(self, "NOMINA", "checkbox de plantilla banco está activo, intentando generar R2...")
-                mensaje_r2 = AE.llenarR2(datos, nomina, año, self.correo_remitente, self.correo_password, self.correos_banco, self.reporte_banco_check.value)
+                mensaje_r2 = AE.llenarR2(datos, nomina, año, self.fecha_field.value, self.correo_remitente, self.correo_password, self.correos_seleccionados , self.reporte_banco_check.value)
+                if self.reporte_banco_check.value:
+                    self.correos_seleccionados = []
+                    log_debug(self, "NOMINA", "Selección de correos reseteada tras generación exitosa")
                 if mensaje_r2:
                     mensajes_exito.append(mensaje_r2)
                 else:
@@ -353,6 +367,9 @@ def generar_nomina(self):
         # Pase lo que pase (éxito o error), devolvemos el botón a su estado normal
         self.btn_generar.disabled = False
         self.btn_generar.text = "Generar Nómina"
+        self.correos_seleccionados = [] # Reseteamos selección de correos para evitar confusiones en siguientes ejecuciones
+        self.reporte_banco_check.value = False # Reseteamos el checkbox de reporte banco para evitar confusiones
+
         
         # self.loader.visible = False
         
@@ -470,7 +487,8 @@ def actualizar_estilos_campos(self):
         self.nueva_pass_field,
         self.nuevo_correo_field,
         self.pass_remitente_input,
-        self.remitente_input
+        self.remitente_input,
+        self.fecha_field
     ]
     
     for campo in lista_campos:
@@ -769,8 +787,16 @@ def actualizar_vista_correos(self):
                     ft.Text(correo, size=15),
                     ft.Container(expand=True),
                     ft.IconButton(
+                        icon=ft.Icons.EDIT_OUTLINED,
+                        icon_color=ft.Colors.BLUE_400,
+                        tooltip="Editar correo",
+                        visible=es_admin,
+                        on_click=lambda e, u=correo: editar_correo_handler(self, u)
+                    ),
+                    ft.IconButton(
                         icon=ft.Icons.DELETE_OUTLINE,
                         icon_color=ft.Colors.RED_400,
+                        tooltip="Eliminar correo",
                         visible=es_admin,
                         on_click=lambda e, u=correo: eliminar_correo_handler(self, u)
                     ),
@@ -835,6 +861,86 @@ def agregar_correo_handler(self):
         log_debug(self, "USER", f"✗ Error al agregar correo: {e}")
         mostrar_dialogo(self, "Error", f"No se pudo agregar el correo: {e}", True)
 
+    self.page.update()
+
+
+def editar_correo_handler(self, correo_actual):
+    """Muestra un modal para editar un correo destinatario existente"""
+    log_debug(self, "EMAIL", f"Preparando edición del correo: {correo_actual}")
+
+    correo_field = ft.TextField(
+        label="Correo electrónico",
+        value=correo_actual,
+        width=300,
+        prefix_icon=ft.Icons.EMAIL_OUTLINED,
+        autofocus=True,
+    )
+
+    def guardar_click(e):
+        nuevo_correo = correo_field.value.strip()
+
+        if not nuevo_correo:
+            correo_field.error_text = "El campo no puede estar vacío"
+            self.page.update()
+            return
+
+        if not validar_formato_correo(nuevo_correo):
+            correo_field.error_text = "Formato de correo inválido"
+            self.page.update()
+            return
+
+        if nuevo_correo == correo_actual:
+            dialogo_editar_correo.open = False
+            self.page.update()
+            return
+
+        try:
+            with open("internal/config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+
+            correos_banco = config.get("correos_banco", [])
+
+            if nuevo_correo in correos_banco:
+                correo_field.error_text = "Este correo ya está registrado"
+                self.page.update()
+                return
+
+            idx = correos_banco.index(correo_actual)
+            correos_banco[idx] = nuevo_correo
+            config["correos_banco"] = correos_banco
+
+            with open("internal/config.json", "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4)
+
+            log_debug(self, "EMAIL", f"✓ Correo actualizado: '{correo_actual}' → '{nuevo_correo}'")
+            dialogo_editar_correo.open = False
+            self.page.update()
+            actualizar_vista_correos(self)
+
+        except Exception as ex:
+            log_debug(self, "EMAIL", f"✗ Error al editar correo: {ex}")
+            mostrar_dialogo(self, "Error", f"No se pudo actualizar el correo: {ex}", True)
+
+    def cancelar_click(e):
+        dialogo_editar_correo.open = False
+        self.page.update()
+
+    dialogo_editar_correo = ft.AlertDialog(
+        modal=True,
+        title=ft.Text("Editar Destinatario"),
+        content=ft.Column([
+            ft.Text(f"Editando: {correo_actual}", color=ft.Colors.GREY_500, size=13),
+            correo_field,
+        ], tight=True, spacing=12),
+        actions=[
+            ft.TextButton("Guardar", icon=ft.Icons.SAVE, on_click=guardar_click),
+            ft.TextButton("Cancelar", on_click=cancelar_click),
+        ],
+        actions_alignment=ft.MainAxisAlignment.END,
+    )
+
+    self.page.overlay.append(dialogo_editar_correo)
+    dialogo_editar_correo.open = True
     self.page.update()
 
 
@@ -941,4 +1047,3 @@ def validar_formato_correo(correo: str) -> bool:
     if correo and re.match(patron, correo.strip()):
         return True
     return False
-        

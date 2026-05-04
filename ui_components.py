@@ -1,7 +1,13 @@
 import flet as ft
 from utils import *
+import datetime
 
 def build_ui(self):
+    self.page.locale_configuration = ft.LocaleConfiguration(
+        supported_locales=[ft.Locale("es", "CL")],  # o "ES" para España
+        current_locale=ft.Locale("es", "CL")
+    )
+    self.page.update()
     verificar_primer_usuario(self)
     log_debug(self, "UI", "→ Construyendo vista principal...")
     self.main_view = build_main_view(self)
@@ -33,61 +39,194 @@ def build_ui(self):
 
 
 def build_main_view(self):
+
+
+    
+    self._actualizando_fecha = False
+    self.correos_seleccionados = []
+    # --- Configuración del DatePicker ---
+    self.date_picker = ft.DatePicker(
+        last_date= datetime.date.today(),
+        on_change=lambda e: actualizar_fecha(e),
+        on_dismiss=lambda _: bloquear_foco()
+    )
+    self.page.overlay.append(self.date_picker)
+
+
+    def actualizar_fecha(e):
+        if e.control.value:
+            self._actualizando_fecha = True  # ← bloqueamos el on_focus
+            self.fecha_field.value = e.control.value.strftime("%d/%m/%Y")
+            self.fecha_field.error_text = None
+            self.date_picker.open = False
+            self.page.update()
+
+    # --- Campos de Entrada ---
     self.nomina_field = ft.TextField(
         label="Nómina",
         hint_text="Ej: 12177",
         width=140,
         text_align=ft.TextAlign.CENTER,
-        input_filter=ft.InputFilter(
-            allow=True, 
-            regex_string=r"^[0-9]*$", 
-            replacement_string=""
-        ),
+        input_filter=ft.InputFilter(allow=True, regex_string=r"^[0-9]*$", replacement_string=""),
         on_submit=lambda _: generar_nomina(self)
-        
     )
     
     self.año_dropdown = ft.Dropdown(
-        label="Año",
-        width=120,
-        value="----",
+        label="Año", width=120, value="----",
         options=[ft.dropdown.Option("----")],
         disabled=True
     )
+
     estilo_texto_check = ft.TextStyle(size=13)
 
-    self.plantilla_nomina_check = ft.Checkbox(
-        label="Plantilla IConstruye",
-        value=True,
-        label_style=estilo_texto_check,
-        visual_density=ft.VisualDensity.COMPACT,
-    )
-    
-    self.plantilla_r2_check = ft.Checkbox(
-        label="Plantilla Banco",
-        value=True,
-        label_style=estilo_texto_check,
-        visual_density=ft.VisualDensity.COMPACT,
+    # --- Campo de Fecha (Compacto) ---
+    self.fecha_field = ft.TextField(
+        label="Fecha de abono",
+        read_only=True,
+        width=200,
+        height=35,
+        text_size=12,
+        prefix_icon=ft.Icons.CALENDAR_TODAY,
+        on_focus=lambda _: abrir_datepicker(),
+        on_click=lambda _: abrir_datepicker(), 
     )
 
-    self.reporte_banco_check = ft.Checkbox(
-        label="Reporte Plantilla Banco",
-        value=True,
-        label_style=estilo_texto_check,
-        visual_density=ft.VisualDensity.COMPACT,
-    )
+    # --- MODAL Correos --- 
+    self.lista_modal_check = ft.Column(spacing=0) # Aquí se cargarán los checks luego
+
+    def cargar_checks_correos():
+        self.lista_modal_check.controls.clear()
+        
+        if hasattr(self, 'correos_banco') and self.correos_banco:
+            # Si la lista lógica está vacía y el reporte está activo, 
+            # asumimos que es la primera carga y seleccionamos todos.
+            # Pero si se vació por el reset de generar_nomina, se quedará vacía.
+            if not self.correos_seleccionados:
+                 # Solo autorellenar si es la primera vez absoluta que se activa el check
+                 # Si prefieres que siempre aparezcan vacíos tras resetear, quita esta línea.
+                 pass 
+
+            for correo in self.correos_banco:
+                self.lista_modal_check.controls.append(
+                    ft.Checkbox(
+                        label=correo,
+                        # CRÍTICO: El valor visual DEPENDE de si está en la lista lógica
+                        value=correo in self.correos_seleccionados, 
+                        label_style=ft.TextStyle(size=14),
+                        on_change=actualizar_seleccion_local
+                    )
+                )
+        else:
+            self.lista_modal_check.controls.append(
+                ft.Text("No hay correos configurados.", color=ft.Colors.RED_400)
+            )
+        self.page.update()
+
+    def actualizar_seleccion_local(e):
+        correo = e.control.label
+        if e.control.value:
+            if correo not in self.correos_seleccionados:
+                self.correos_seleccionados.append(correo)
+        else:
+            if correo in self.correos_seleccionados:
+                self.correos_seleccionados.remove(correo)
+
     
+    
+    self.dialogo_reporte = ft.AlertDialog(
+        title=ft.Text("Opciones de Reporte Banco"),
+        content=ft.Container(
+            content=self.lista_modal_check,
+            width=300,
+            height=200, # Ajustable según necesites
+        ),
+        actions=[
+            ft.TextButton("Aceptar", on_click=lambda _: self.cerrar_modal_reporte())
+        ],
+    )
+    self.page.overlay.append(self.dialogo_reporte)
+
+    def cerrar_modal_reporte():
+        self.dialogo_reporte.open = False
+        self.page.update()
+    
+    self.cerrar_modal_reporte = cerrar_modal_reporte
+
+    def bloquear_foco():
+        self._actualizando_fecha = True
+        self.page.update()
+
+    def abrir_datepicker():
+        if self._actualizando_fecha:
+            self._actualizando_fecha = False  # ← reseteamos y salimos
+            return
+        self.date_picker.open = True
+        self.page.update()
+
+    # --- Checkboxes ---
+    self.plantilla_nomina_check = ft.Checkbox(label="Plantilla IConstruye", value=True, label_style=estilo_texto_check, visual_density=ft.VisualDensity.COMPACT)
+    self.plantilla_r2_check = ft.Checkbox(label="Plantilla Banco", value=True, label_style=estilo_texto_check, visual_density=ft.VisualDensity.COMPACT)
+
+    def toggle_fecha_field(e):
+        valor = e.control.value
+        self.fecha_field.disabled = not valor
+        self.fecha_field.opacity = 1.0 if valor else 0.5
+        
+        if not valor:
+            self.fecha_field.value = ""
+            self.fecha_field.error_text = None
+            self.correos_seleccionados = [] 
+            log_debug(self, "UI", "Selección de correos reseteada (Checkbox desactivado)")
+        else:
+            cargar_checks_correos()
+            self.dialogo_reporte.open = True
+            
+        self.page.update()
+
+    self.reporte_banco_check = ft.Checkbox(
+        value=False,
+        visual_density=ft.VisualDensity.COMPACT,
+        on_change=toggle_fecha_field, 
+    )
+
+    etiqueta_reporte = ft.Row(
+        controls=[
+            ft.Text("Reporte Plantilla Banco", style=estilo_texto_check),
+            ft.IconButton(
+                icon=ft.Icons.EMAIL_OUTLINED,
+                icon_size=18,
+                icon_color=ft.Colors.BLUE_400,
+                tooltip="Configurar destinatarios",
+                on_click=lambda _: abrir_modal_desde_icono()
+            )
+        ],
+        spacing=5,
+        tight=True
+    )
+    def abrir_modal_desde_icono():
+        if self.reporte_banco_check.value:
+            cargar_checks_correos()
+            self.dialogo_reporte.open = True
+            self.page.update()
+    
+    # --- Contenedor de la Lista (Con indentación) ---
     self.lista_container = ft.Container(
         content=ft.Column(
             controls=[
                 self.plantilla_nomina_check,
                 self.plantilla_r2_check,
-                self.reporte_banco_check,
+                # Aquí juntamos el checkbox con su etiqueta e icono
+                ft.Row([self.reporte_banco_check, etiqueta_reporte], spacing=0),
+                
+                ft.Container(
+                    content=self.fecha_field,
+                    padding=ft.padding.only(left=30, top=0, bottom=0)
+                ),
             ],
-            spacing=0, 
+            spacing=2,
             horizontal_alignment=ft.CrossAxisAlignment.START,
         ),
-        padding=ft.padding.symmetric(vertical=8, horizontal=20),
+        padding=ft.padding.symmetric(vertical=10, horizontal=20),
         border=ft.border.all(1, ft.Colors.OUTLINE_VARIANT),
         bgcolor=ft.Colors.BLUE_GREY_50 if not self.es_oscuro else ft.Colors.GREY_900, 
         width=280,
@@ -95,10 +234,8 @@ def build_main_view(self):
 
     self.btn_generar = ft.ElevatedButton(
         text="Generar Nómina",
-        width=200,
-        height=45,
-        on_click=lambda _: generar_nomina(self
-        )
+        width=200, height=45,
+        on_click=lambda _: generar_nomina(self)
     )
 
     return ft.Container(
@@ -128,7 +265,6 @@ def build_main_view(self):
                     spacing=10
                 ),
                 
-                ft.Container(height=5),
                 ft.Text("Plantillas a rellenar", size=14,),
 
                 # LISTA CON FONDO DIFERENCIADO Y MÁS ANCHA
@@ -139,7 +275,6 @@ def build_main_view(self):
                     ]
                 ),
                 
-                ft.Container(height=25),
                 self.btn_generar
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -167,8 +302,8 @@ def build_config_view(self):
 
     # --- VISTA 1: PARÁMETROS ---
     self.rut_field = ft.TextField(label="RUT Empresa", width=330, hint_text="12345678-K")                
-    self.db_path_field = ft.TextField(label="Base de Datos", width=330, read_only=True)
-    self.output_path_field = ft.TextField(label="Carpeta de Salida", width=330, read_only=True)
+    self.db_path_field = ft.TextField(label="Base de Datos", width=330, read_only=True, on_click=lambda _: buscar_archivo(self, "db"))
+    self.output_path_field = ft.TextField(label="Carpeta de Salida", width=330, read_only=True, on_click=lambda _: buscar_archivo(self, "folder"))
 
     self.vista_parametros = ft.Column([
         ft.Container(height=20),

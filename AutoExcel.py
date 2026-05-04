@@ -324,7 +324,7 @@ def llenar_nomina_xlsx(datos_db, numero_nomina, año, RutEmpresa=""):
         log_debug("EXCEL", f"Traceback:\n{traceback.format_exc()}")
         raise e
 
-def llenarR2(datos_db, numero_nomina, año, user, app_pasword, correos_enviar, enviarBool):
+def llenarR2(datos_db, numero_nomina, año, fecha_pago, user, app_pasword, correos_enviar, enviarBool):
     """
     Genera la nómina R2 en memoria. 
     Si enviarBool es True, requiere éxito en el envío de correo para guardar en disco.
@@ -416,14 +416,14 @@ def llenarR2(datos_db, numero_nomina, año, user, app_pasword, correos_enviar, e
         log_debug("EXCEL", "✓ Estructura Excel generada correctamente en memoria RAM")
 
         # 5. LÓGICA DE ENVÍO Y GUARDADO FÍSICO
-        nombre_archivo = f"R2_Nomina_{numero_nomina}-{año}.xlsx"
+        nombre_archivo = f"Nomina_{numero_nomina}-{año}.xlsx"
         resumen_email = ""
 
         if enviarBool:
             log_debug("EMAIL", f"→ Iniciando protocolo de notificación (Destinatarios: {len(correos_enviar)})")
             datos_asunto = {'nomina': numero_nomina, 'año': año}
             
-            exito_mail, msg_mail = enviarcorreo(user, app_pasword, correos_enviar, datos_asunto, agrupados, monto_total_nomina)
+            exito_mail, msg_mail = enviarcorreo(user, app_pasword, correos_enviar, datos_asunto, agrupados, monto_total_nomina, fecha_pago)
 
             if exito_mail:
                 log_debug("EMAIL", "✓ Notificación enviada con éxito. Procediendo a guardar archivo.")
@@ -513,7 +513,7 @@ def inspeccionar_tipos_documento():
     return resultados
 
 
-def enviarcorreo( remitente, password, destinatarios, asunto_data, datos_reporte, monto_total):
+def enviarcorreo( remitente, password, destinatarios, asunto_data, datos_reporte, monto_total, fecha_pago):
     """
     Construye el HTML y envía el correo.
     asunto_data: dict con {'nomina': num, 'año': año}
@@ -547,26 +547,28 @@ def enviarcorreo( remitente, password, destinatarios, asunto_data, datos_reporte
         <p>De nuestra consideración:\n
     Se ha procedido a dar orden de pago a los siguientes documentos:<p> 
         <h2 style="color: #2c3e50; border-top: 2px solid #3498db; padding: 4px;">
-            Resumen de Nómina R2 - N° {asunto_data['nomina']}
+            Resumen de Nómina - N° {asunto_data['nomina']} - fecha de abono: {fecha_pago}
         </h2>
-        <table style="border-collapse: collapse; width: 100%; margin-top: 15px;">
-            <thead>
-                <tr style="background-color: #3498db; color: white;">
-                    <th style="padding: 8px; text-align: left;">RazónsSocial</th>
-                    <th style="padding: 8px; text-align: left;">RUT</th>
-                    <th style="padding: 8px; text-align: right;">Monto pagado</th>
-                    <th style="padding: 8px; text-align: left;">Detalle de facturas</th>
-                </tr>
-            </thead>
-            <tbody>{filas_tabla}</tbody>
-            <tfoot>
-                <tr style="background-color: #f9f9f9; font-weight: bold;">
-                    <td colspan="2" style="padding: 8px; border-top: 2px solid #333; text-align: right;">TOTAL:</td>
-                    <td style="padding: 8px; border-top: 2px solid #333; text-align: right;">${monto_total:,.0f}</td>
-                    <td style="border-top: 2px solid #333;"></td>
-                </tr>
-            </tfoot>
-        </table>
+        <div style="margin: 0 3%;" >
+            <table style="border-collapse: collapse; width: 100%; margin: 10px;">
+                <thead>
+                    <tr style="background-color: #3498db; color: white;">
+                        <th style="padding: 8px; text-align: left;">RazónsSocial</th>
+                        <th style="padding: 8px; text-align: left;">RUT</th>
+                        <th style="padding: 8px; text-align: right;">Monto</th>
+                        <th style="padding: 8px; text-align: left;">Detalle de facturas</th>
+                    </tr>
+                </thead>
+                <tbody>{filas_tabla}</tbody>
+                <tfoot>
+                    <tr style="background-color: #f9f9f9; font-weight: bold;">
+                        <td colspan="2" style="padding: 8px; border-top: 2px solid #333; text-align: right;">TOTAL:</td>
+                        <td style="padding: 8px; border-top: 2px solid #333; text-align: right;">${monto_total:,.0f}</td>
+                        <td style="border-top: 2px solid #333;"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
     </body>
     </html>
     """.replace(",", ".")
@@ -575,6 +577,7 @@ def enviarcorreo( remitente, password, destinatarios, asunto_data, datos_reporte
     try:
         destinatarios_limpios = [d.strip() for d in destinatarios if d and str(d).strip()]
         if not destinatarios_limpios: return True, "Sin destinatarios"
+        log_debug("EMAIL", f" destinatarios: {destinatarios_limpios}")
 
         mensaje = MIMEMultipart()
         mensaje["From"] = remitente

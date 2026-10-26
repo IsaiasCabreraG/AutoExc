@@ -46,3 +46,5 @@ typing_extensions==4.15.0
 tzdata==2025.3
 urllib3==2.6.3
 watchdog==4.0.2
+cryptography==50.0.2
+python-dotenv==1.2.4

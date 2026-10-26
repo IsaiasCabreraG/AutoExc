@@ -416,7 +416,7 @@ def llenarR2(datos_db, numero_nomina, año, fecha_pago, user, app_pasword, corre
         log_debug("EXCEL", "✓ Estructura Excel generada correctamente en memoria RAM")
 
         # 5. LÓGICA DE ENVÍO Y GUARDADO FÍSICO
-        nombre_archivo = f"Nomina_{numero_nomina}-{año}.xlsx"
+        nombre_archivo = f"Nomina_Banco_{numero_nomina}-{año}.xlsx"
         resumen_email = ""
 
         if enviarBool:

@@ -46,7 +46,6 @@ def build_main_view(self):
     self.correos_seleccionados = []
     # --- Configuración del DatePicker ---
     self.date_picker = ft.DatePicker(
-        last_date= datetime.date.today(),
         on_change=lambda e: actualizar_fecha(e),
         on_dismiss=lambda _: bloquear_foco()
     )

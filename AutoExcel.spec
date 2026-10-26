@@ -35,6 +35,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    version='C:\\Users\\isaia\\Repositorios\\AutoExc\\version_info.txt',
+    version='version_info.txt',
     icon='static\\logo.ico',
 )
